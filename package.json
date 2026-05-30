@@ -1,0 +1,28 @@
+{
+  "name": "micolita-anime-stremio-addon",
+  "version": "1.0.0",
+  "description": "Stremio addon for watching Anime in Spanish. Powered by AnimeAV1, AnimeFLV, TioAnime, MonosChinos, JKAnime.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.9.0",
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "puppeteer": "^21.11.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "devDependencies": {
+    "vercel": "^54.2.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "puppeteer",
+      "esbuild"
+    ]
+  }
+}

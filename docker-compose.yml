@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  micolita-anime-addon:
+    build: .
+    container_name: micolita-anime-stremio
+    restart: unless-stopped
+    ports:
+      - "7001:7000"
+    environment:
+      - PORT=7000
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
