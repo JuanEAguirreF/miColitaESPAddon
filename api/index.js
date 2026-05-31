@@ -1,30 +1,28 @@
 const express = require('express');
-const cors = require('cors');
+const cors = require('express'); // Wait, the original imported cors but let's make sure it's the cors library: const cors = require('cors');
 const axios = require('axios');
-const path = require('path');
+
+// Using the actual cors package
+const corsMiddleware = require('cors');
 
 // Scraper services
 const { resolveEmbedUrl } = require('./scraper/download.service');
-const tioanimeService = require('./scraper/tioanime.service');
-const animeflvService = require('./scraper/animeflv.service');
-const animeav1Service = require('./scraper/animeav1.service');
-const monoschinosService = require('./scraper/monoschinos.service');
-const jkanimeService = require('./scraper/jkanime.service');
+const lamovieService = require('./scraper/lamovie.service');
 
 const app = express();
-app.use(cors());
+app.use(corsMiddleware());
 
-// Addon Manifest Definition for miColita Anime
+// Addon Manifest Definition for miColita LaMovie
 const MANIFEST = {
-  id: 'org.micolita.anime.addon',
-  version: '1.1.0',
-  name: 'miColita Anime',
-  description: 'Addon de Stremio premium para ver Anime en Español (SUB/DUB). Enlaces directos y streams rápidos de AnimeFLV, TioAnime, MonosChinos, AnimeAV1 y JKAnime.',
+  id: 'org.micolita.lamovie.addon',
+  version: '1.2.0',
+  name: 'miColita LaMovie',
+  description: 'Addon de Stremio premium para ver Películas y Series en Español de LaMovie.org. Enlaces directos sin publicidad y reproducción nativa.',
   logo: 'https://i.imgur.com/G55nEqA.png',
   background: 'https://i.imgur.com/3cPhFmg.jpeg',
   resources: ['stream'],
-  types: ['movie', 'series', 'anime'],
-  idPrefixes: ['tt', 'kitsu'],
+  types: ['movie', 'series'],
+  idPrefixes: ['tt'],
   catalogs: []
 };
 
@@ -48,82 +46,30 @@ function cleanName(name) {
     .trim();
 }
 
-// Metadata resolver from Cinemeta or Kitsu Addon APIs
-async function getAnimeMeta(id, type) {
+// Metadata resolver from Cinemeta
+async function getContentMeta(id, type) {
   const cacheKey = `${id}:${type}`;
   const cached = metaCache.get(cacheKey);
   const now = Date.now();
 
   if (cached && (now - cached.timestamp < CACHE_TTL_META)) {
-    console.log(`[miColita Anime] [Cache] Metadata for ${id} loaded from cache.`);
+    console.log(`[miColita LaMovie] [Cache] Metadata for ${id} loaded from cache.`);
     return cached.data;
   }
 
   try {
-    if (id.startsWith('kitsu:')) {
-      const cleanKitsuId = id.replace('kitsu:', '');
-      const url = `https://anime-kitsu.strem.fun/meta/anime/kitsu:${cleanKitsuId}.json`;
-      console.log(`[miColita Anime] [Meta] Fetching Kitsu metadata from: ${url}`);
-      const response = await axios.get(url, { timeout: 10000 });
-      if (response.data && response.data.meta) {
-        metaCache.set(cacheKey, { data: response.data.meta, timestamp: now });
-        return response.data.meta;
-      }
-    } else if (id.startsWith('tt')) {
-      // IMDb ID
+    if (id.startsWith('tt')) {
       const resolvedType = type === 'movie' ? 'movie' : 'series';
       const url = `https://v3-cinemeta.strem.io/meta/${resolvedType}/${id}.json`;
-      console.log(`[miColita Anime] [Meta] Fetching Cinemeta metadata from: ${url}`);
+      console.log(`[miColita LaMovie] [Meta] Fetching Cinemeta metadata from: ${url}`);
       const response = await axios.get(url, { timeout: 10000 });
       if (response.data && response.data.meta) {
         metaCache.set(cacheKey, { data: response.data.meta, timestamp: now });
         return response.data.meta;
-      }
-
-      // Fallback: try opposite type if it was misclassified in request
-      const alternativeType = resolvedType === 'series' ? 'movie' : 'series';
-      const fallbackUrl = `https://v3-cinemeta.strem.io/meta/${alternativeType}/${id}.json`;
-      console.log(`[miColita Anime] [Meta] Fetching Cinemeta fallback metadata from: ${fallbackUrl}`);
-      const fallbackResponse = await axios.get(fallbackUrl, { timeout: 10000 });
-      if (fallbackResponse.data && fallbackResponse.data.meta) {
-        metaCache.set(cacheKey, { data: fallbackResponse.data.meta, timestamp: now });
-        return fallbackResponse.data.meta;
       }
     }
   } catch (e) {
-    console.error(`[miColita Anime] [Meta] Error resolving metadata for ${id}:`, e.message);
-  }
-  return null;
-}
-
-// Scraper matcher helper to find the exact slug
-async function findSlugInProvider(service, animeName, providerName) {
-  try {
-    const searchResult = await service.searchAnime(animeName);
-    if (searchResult && searchResult.success && searchResult.data.results.length > 0) {
-      const results = searchResult.data.results;
-      const targetClean = cleanName(animeName);
-
-      // 1. Check exact match
-      for (const res of results) {
-        if (cleanName(res.title) === targetClean) {
-          return res.slug;
-        }
-      }
-
-      // 2. Check fuzzy match
-      for (const res of results) {
-        const cleanResTitle = cleanName(res.title);
-        if (cleanResTitle.includes(targetClean) || targetClean.includes(cleanResTitle)) {
-          return res.slug;
-        }
-      }
-
-      // 3. Fallback to first result
-      return results[0].slug;
-    }
-  } catch (err) {
-    console.error(`[miColita Anime] [Scraper] Error searching slug in ${providerName}:`, err.message);
+    console.error(`[miColita LaMovie] [Meta] Error resolving metadata for ${id}:`, e.message);
   }
   return null;
 }
@@ -134,129 +80,76 @@ async function resolveToDirectLink(id, embedUrl) {
   const now = Date.now();
 
   if (cached && (now - cached.timestamp < CACHE_TTL_DIRECT)) {
-    console.log(`[miColita Anime] [Cache] Direct video link for ${id} loaded from cache.`);
+    console.log(`[miColita LaMovie] [Cache] Direct video link loaded from cache.`);
     return cached.url;
   }
 
-  console.log(`[miColita Anime] [Direct] Resolving embed: ${embedUrl} in real-time...`);
+  console.log(`[miColita LaMovie] [Direct] Resolving embed: ${embedUrl} in real-time...`);
   try {
-    // Call the anime1v-api resolveEmbedUrl function
     const directUrl = await resolveEmbedUrl(embedUrl);
     if (directUrl) {
-      console.log(`[miColita Anime] [Direct] Successfully resolved direct URL: ${directUrl.substring(0, 120)}...`);
+      console.log(`[miColita LaMovie] [Direct] Successfully resolved direct URL: ${directUrl.substring(0, 120)}...`);
       directLinkCache.set(id, { url: directUrl, timestamp: now });
       return directUrl;
     }
   } catch (err) {
-    console.error(`[miColita Anime] [Direct] Error resolving embed to direct link:`, err.message);
+    console.error(`[miColita LaMovie] [Direct] Error resolving embed to direct link:`, err.message);
   }
   return null;
 }
 
-// Multi-provider cascade scraper execution
-async function getAnimeStreams(animeName, episodeNumber, host, protocol) {
-  const cacheKey = `${cleanName(animeName)}:${episodeNumber}`;
+// Fetch streams from LaMovie scraper
+async function getContentStreams(title, year, type, season, episode, host, protocol) {
+  const cacheKey = type === 'movie' 
+    ? `${cleanName(title)}:${year || 'any'}`
+    : `${cleanName(title)}:S${season}E${episode}`;
+
   const cached = streamCache.get(cacheKey);
   const now = Date.now();
 
   if (cached && (now - cached.timestamp < CACHE_TTL_STREAMS)) {
-    console.log(`[miColita Anime] [Cache] Streams for ${animeName} E${episodeNumber} loaded from cache.`);
+    console.log(`[miColita LaMovie] [Cache] Streams loaded from cache for key: ${cacheKey}`);
     return cached.data;
   }
 
-  const providers = [
-    { name: 'TioAnime', service: tioanimeService },
-    { name: 'AnimeFLV', service: animeflvService },
-    { name: 'AnimeAV1', service: animeav1Service },
-    { name: 'MonosChinos', service: monoschinosService },
-    { name: 'JKAnime', service: jkanimeService }
-  ];
-
   const streams = [];
-
-  for (const prov of providers) {
-    try {
-      console.log(`[miColita Anime] [Scraper] Querying ${prov.name} for: "${animeName}"`);
-      const slug = await findSlugInProvider(prov.service, animeName, prov.name);
-      if (slug) {
-        console.log(`[miColita Anime] [Scraper] Slug found in ${prov.name}: "${slug}". Resolving episode ${episodeNumber}...`);
-
-        let episodeUrl = '';
-        if (prov.name === 'TioAnime') {
-          episodeUrl = `https://tioanime.com/ver/${slug}-${episodeNumber}`;
-        } else if (prov.name === 'AnimeFLV') {
-          episodeUrl = `https://animeflv.net/ver/${slug}-${episodeNumber}`;
-        } else if (prov.name === 'AnimeAV1') {
-          episodeUrl = `https://animeav1.com/media/${slug}/${episodeNumber}`;
-        } else if (prov.name === 'MonosChinos') {
-          episodeUrl = `https://monoschinos2.com/ver/${slug}-episodio-${episodeNumber}`;
-        } else if (prov.name === 'JKAnime') {
-          episodeUrl = `https://jkanime.net/${slug}/${episodeNumber}/`;
-        }
-
-        const links = await prov.service.getEpisodeLinks(episodeUrl);
-        if (links && links.success && links.data) {
-          const data = links.data;
-          
-          const subLinks = data.streamLinks?.SUB || data.servers?.sub || [];
-          const dubLinks = data.streamLinks?.DUB || data.servers?.dub || [];
-
-          console.log(`[miColita Anime] [Scraper] Successfully extracted ${subLinks.length} SUB and ${dubLinks.length} DUB servers from ${prov.name}`);
-
-          // Process SUB links (Jap sub Esp)
-          subLinks.forEach((link) => {
-            const cleanServer = link.server.toUpperCase();
-            const playDirectUrl = `${protocol}://${host}/play/direct?url=${encodeURIComponent(link.url)}&id=${cleanName(animeName)}_E${episodeNumber}_${cleanName(link.server)}`;
-            
-            // 1. [NATIVO] Direct play redirect stream (plays inside Stremio)
-            streams.push({
-              name: `miColita\n${prov.name}`,
-              type: 'url',
-              title: `⭐ [NATIVO] [SUB] ${cleanServer}\n📺 Cap. ${episodeNumber} • Audio: Jap (Sub Esp)\n🎬 Reproducción nativa en reproductor interno\n⚡ Resolvedor inteligente de video en tiempo real`,
-              url: playDirectUrl
-            });
-
-            // 2. [EMBED] Standard redirect embed (opens in browser as backup)
-            streams.push({
-              name: `miColita\n${prov.name}`,
-              type: 'embed',
-              title: `🔗 [EMBED] [SUB] ${cleanServer}\n📺 Cap. ${episodeNumber} • Audio: Jap (Sub Esp)\n🌐 Abre en el navegador (Opción tradicional)`,
-              externalUrl: link.url
-            });
-          });
-
-          // Process DUB links (Spanish Dub / Audio Dual)
-          dubLinks.forEach((link) => {
-            const cleanServer = link.server.toUpperCase();
-            const playDirectUrl = `${protocol}://${host}/play/direct?url=${encodeURIComponent(link.url)}&id=${cleanName(animeName)}_E${episodeNumber}_${cleanName(link.server)}`;
-
-            // 1. [NATIVO] Direct play redirect stream (plays inside Stremio)
-            streams.push({
-              name: `miColita\n${prov.name}`,
-              type: 'url',
-              title: `⭐ [NATIVO] [DUB] ${cleanServer}\n📺 Cap. ${episodeNumber} • Audio: Español Latino/Castellano\n🎬 Reproducción nativa en reproductor interno\n⚡ Resolvedor inteligente de video en tiempo real`,
-              url: playDirectUrl
-            });
-
-            // 2. [EMBED] Standard redirect embed (opens in browser as backup)
-            streams.push({
-              name: `miColita\n${prov.name}`,
-              type: 'embed',
-              title: `🔗 [EMBED] [DUB] ${cleanServer}\n📺 Cap. ${episodeNumber} • Audio: Español Latino/Castellano\n🌐 Abre en el navegador (Opción tradicional)`,
-              externalUrl: link.url
-            });
-          });
-
-          // Short-circuit cascade for massive speed
-          if (streams.length > 0) {
-            console.log(`[miColita Anime] [Scraper] Found ${streams.length} streams in ${prov.name}. Stopping provider cascade.`);
-            break;
-          }
-        }
-      }
-    } catch (err) {
-      console.error(`[miColita Anime] [Scraper] Error in provider ${prov.name}:`, err.message);
+  try {
+    console.log(`[miColita LaMovie] [Scraper] Resolving streams for: "${title}" (${year || ''}), Type: ${type}`);
+    let embeds = [];
+    if (type === 'movie') {
+      embeds = await lamovieService.getMovieStreams(title, year);
+    } else {
+      embeds = await lamovieService.getSeriesStreams(title, season, episode);
     }
+
+    if (embeds && embeds.length > 0) {
+      console.log(`[miColita LaMovie] [Scraper] Found ${embeds.length} embeds on LaMovie.org`);
+      embeds.forEach((embed) => {
+        const serverName = (embed.server || 'Online').toUpperCase();
+        const langName = (embed.lang || 'Latino').toUpperCase();
+        const qualityName = (embed.quality || 'HD').toUpperCase();
+        
+        const playDirectUrl = `${protocol}://${host}/play/direct?url=${encodeURIComponent(embed.url)}&id=${cleanName(title)}_${type === 'movie' ? 'movie' : 'S' + season + 'E' + episode}_${cleanName(embed.server)}`;
+
+        // 1. [NATIVO] Direct play redirect stream (plays inside Stremio)
+        streams.push({
+          name: `miColita\nLaMovie`,
+          type: 'url',
+          title: `⭐ [NATIVO] [${langName}] ${serverName} (${qualityName})\n🎬 Reproducción nativa en reproductor interno\n⚡ Resolvedor inteligente de video en tiempo real`,
+          url: playDirectUrl
+        });
+
+        // 2. [EMBED] Standard redirect embed (opens in browser as backup)
+        streams.push({
+          name: `miColita\nLaMovie`,
+          type: 'embed',
+          title: `🔗 [EMBED] [${langName}] ${serverName} (${qualityName})\n🌐 Abre en el navegador (Opción tradicional)`,
+          externalUrl: embed.url
+        });
+      });
+    }
+  } catch (err) {
+    console.error(`[miColita LaMovie] [Scraper] Error getting streams:`, err.message);
   }
 
   if (streams.length > 0) {
@@ -266,7 +159,7 @@ async function getAnimeStreams(animeName, episodeNumber, host, protocol) {
   return streams;
 }
 
-// Landing page generator with Premium Anime aesthetics
+// Landing page generator with Premium aesthetics
 function getLandingPageHtml(host, protocol) {
   const manifestUrl = `${protocol}://${host}/manifest.json`;
   const stremioUrl = manifestUrl.replace(/^http/, 'stremio');
@@ -277,8 +170,8 @@ function getLandingPageHtml(host, protocol) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>miColita Anime | Stremio Addon</title>
-    <meta name="description" content="Addon premium de Stremio para ver Anime en español de forma nativa, veloz y organizada.">
+    <title>miColita LaMovie | Stremio Addon</title>
+    <meta name="description" content="Addon premium de Stremio para ver películas y series en español de forma nativa, veloz y sin publicidad.">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -288,14 +181,14 @@ function getLandingPageHtml(host, protocol) {
     
     <style>
         :root {
-            --bg-color: #03000a;
-            --card-bg: rgba(12, 5, 23, 0.45);
-            --border-color: rgba(186, 104, 255, 0.15);
+            --bg-color: #030208;
+            --card-bg: rgba(10, 6, 20, 0.5);
+            --border-color: rgba(220, 38, 38, 0.15);
             --text-primary: #ffffff;
-            --text-secondary: #c7b9e0;
-            --accent-primary: #ec4899;
-            --accent-secondary: #8b5cf6;
-            --glow-color: rgba(236, 72, 153, 0.4);
+            --text-secondary: #ebdcf5;
+            --accent-primary: #dc2626;
+            --accent-secondary: #991b1b;
+            --glow-color: rgba(220, 38, 38, 0.4);
         }
 
         * {
@@ -315,10 +208,10 @@ function getLandingPageHtml(host, protocol) {
             align-items: center;
             overflow-x: hidden;
             background-image: 
-                radial-gradient(circle at 15% 20%, rgba(236, 72, 153, 0.12) 0%, transparent 40%),
-                radial-gradient(circle at 85% 85%, rgba(139, 92, 246, 0.12) 0%, transparent 40%),
-                linear-gradient(rgba(186, 104, 255, 0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(186, 104, 255, 0.03) 1px, transparent 1px);
+                radial-gradient(circle at 15% 20%, rgba(220, 38, 38, 0.12) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(153, 27, 27, 0.12) 0%, transparent 40%),
+                linear-gradient(rgba(220, 38, 38, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(220, 38, 38, 0.03) 1px, transparent 1px);
             background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
         }
 
@@ -332,7 +225,6 @@ function getLandingPageHtml(host, protocol) {
             text-align: center;
         }
 
-        /* Glassmorphic card */
         .card {
             background: var(--card-bg);
             backdrop-filter: blur(25px);
@@ -381,7 +273,7 @@ function getLandingPageHtml(host, protocol) {
             font-weight: 800;
             letter-spacing: -1px;
             margin-bottom: 15px;
-            background: linear-gradient(135deg, #ffffff 30%, #ec4899 100%);
+            background: linear-gradient(135deg, #ffffff 40%, #dc2626 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
@@ -394,7 +286,6 @@ function getLandingPageHtml(host, protocol) {
             line-height: 1.6;
         }
 
-        /* Buttons and Inputs */
         .actions {
             display: flex;
             flex-direction: column;
@@ -429,11 +320,7 @@ function getLandingPageHtml(host, protocol) {
 
         .btn-primary:hover {
             transform: translateY(-2px);
-            box-shadow: 0 15px 35px rgba(236, 72, 153, 0.6);
-        }
-
-        .btn-primary:active {
-            transform: translateY(0);
+            box-shadow: 0 15px 35px rgba(220, 38, 38, 0.6);
         }
 
         .input-group {
@@ -448,7 +335,7 @@ function getLandingPageHtml(host, protocol) {
             padding: 18px 120px 18px 22px;
             border-radius: 16px;
             background: rgba(5, 2, 12, 0.6);
-            border: 1px solid rgba(186, 104, 255, 0.2);
+            border: 1px solid rgba(220, 38, 38, 0.2);
             color: #ffffff;
             font-size: 14px;
             outline: none;
@@ -460,7 +347,7 @@ function getLandingPageHtml(host, protocol) {
 
         .input-group input:focus {
             border-color: var(--accent-primary);
-            box-shadow: 0 0 10px rgba(236, 72, 153, 0.15);
+            box-shadow: 0 0 10px rgba(220, 38, 38, 0.15);
         }
 
         .input-group button.copy-btn {
@@ -468,8 +355,8 @@ function getLandingPageHtml(host, protocol) {
             right: 8px;
             top: 50%;
             transform: translateY(-50%);
-            background: linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(139, 92, 246, 0.2));
-            border: 1px solid rgba(236, 72, 153, 0.3);
+            background: linear-gradient(135deg, rgba(220, 38, 38, 0.2), rgba(153, 27, 27, 0.2));
+            border: 1px solid rgba(220, 38, 38, 0.3);
             border-radius: 12px;
             padding: 10px 16px;
             color: #ffffff;
@@ -484,7 +371,6 @@ function getLandingPageHtml(host, protocol) {
             border-color: transparent;
         }
 
-        /* Features Section */
         .features {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -494,8 +380,8 @@ function getLandingPageHtml(host, protocol) {
         }
 
         .feature-card {
-            background: rgba(186, 104, 255, 0.03);
-            border: 1px solid rgba(186, 104, 255, 0.06);
+            background: rgba(220, 38, 38, 0.03);
+            border: 1px solid rgba(220, 38, 38, 0.06);
             border-radius: 20px;
             padding: 25px;
             display: flex;
@@ -506,8 +392,8 @@ function getLandingPageHtml(host, protocol) {
         }
 
         .feature-card:hover {
-            background: rgba(186, 104, 255, 0.06);
-            border-color: rgba(236, 72, 153, 0.25);
+            background: rgba(220, 38, 38, 0.06);
+            border-color: rgba(220, 38, 38, 0.25);
             transform: translateY(-3px);
         }
 
@@ -530,11 +416,10 @@ function getLandingPageHtml(host, protocol) {
             line-height: 1.4;
         }
 
-        /* Footer */
         footer {
             margin-top: 50px;
             font-size: 12px;
-            color: rgba(199, 185, 224, 0.4);
+            color: rgba(235, 220, 245, 0.4);
             display: flex;
             flex-direction: column;
             gap: 8px;
@@ -550,7 +435,6 @@ function getLandingPageHtml(host, protocol) {
             color: var(--accent-primary);
         }
 
-        /* Animations */
         @keyframes float {
             0% { transform: translateY(0px); }
             50% { transform: translateY(-10px); }
@@ -569,12 +453,12 @@ function getLandingPageHtml(host, protocol) {
         <div class="card">
             <div style="display: flex; justify-content: center; width: 100%;">
                 <div class="logo-container">
-                    <i class="fa-solid fa-fire-flame-curved"></i>
+                    <i class="fa-solid fa-play"></i>
                 </div>
             </div>
             
-            <h1>miColita Anime</h1>
-            <p class="subtitle">Disfruta del mejor Anime en Stremio con audio Japonés (Subtitulado en Español) o Doblaje Latino/Castellano de manera instantánea y gratuita.</p>
+            <h1>miColita LaMovie</h1>
+            <p class="subtitle">Disfruta de las mejores películas y series en Stremio con audio Español (Latino o Castellano) de forma nativa, ultra rápida y libre de publicidad.</p>
             
             <div style="display: flex; flex-direction: column; align-items: center; width: 100%;">
                 <div class="actions">
@@ -595,19 +479,19 @@ function getLandingPageHtml(host, protocol) {
 
             <div class="features">
                 <div class="feature-card">
-                    <i class="fa-solid fa-clapperboard"></i>
-                    <h3>Multi-Proveedor</h3>
-                    <p>Integración en cascada con AnimeFLV, TioAnime, MonosChinos, AnimeAV1 y JKAnime.</p>
+                    <i class="fa-solid fa-photo-film"></i>
+                    <h3>Catálogo LaMovie</h3>
+                    <p>Acceso completo y directo a las series y películas del catálogo en español de LaMovie.org.</p>
                 </div>
                 <div class="feature-card">
                     <i class="fa-solid fa-language"></i>
-                    <h3>SUB y DUB</h3>
-                    <p>Categorizado de streams en audio original subtitulado o doblaje en español.</p>
+                    <h3>Audio Latino / Doblajes</h3>
+                    <p>Soporte de múltiples variantes de doblajes en español e idiomas originales.</p>
                 </div>
                 <div class="feature-card">
-                    <i class="fa-solid fa-bolt"></i>
-                    <h3>NATIVO Premium</h3>
-                    <p>Resolvedor en tiempo real de enlaces de video directos para reproducción sin abrir navegador.</p>
+                    <i class="fa-solid fa-circle-play"></i>
+                    <h3>Reproductor Nativo</h3>
+                    <p>Conversión en tiempo real a enlaces M3U8/MP4 para reproducir directamente en la app sin anuncios.</p>
                 </div>
             </div>
         </div>
@@ -629,11 +513,11 @@ function getLandingPageHtml(host, protocol) {
 
             const btn = document.querySelector('.copy-btn');
             btn.innerHTML = '<i class="fa-solid fa-check"></i> ¡Copiado!';
-            btn.style.background = '#ec4899';
+            btn.style.background = '#dc2626';
             
             setTimeout(() => {
                 btn.innerHTML = '<i class="fa-regular fa-copy"></i> Copiar';
-                btn.style.background = 'linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(139, 92, 246, 0.2))';
+                btn.style.background = 'linear-gradient(135deg, rgba(220, 38, 38, 0.2), rgba(153, 27, 27, 0.2))';
             }, 2500);
         }
     </script>
@@ -662,19 +546,19 @@ app.get('/play/direct', async (req, res) => {
     return res.status(400).send('Falta el parámetro url');
   }
 
-  console.log(`[miColita Anime] [/play/direct] Request to resolve direct link for: ${id} (${url})`);
+  console.log(`[miColita LaMovie] [/play/direct] Request to resolve direct link for: ${id} (${url})`);
 
   try {
     const directUrl = await resolveToDirectLink(url, url);
     if (directUrl) {
-      console.log(`[miColita Anime] [/play/direct] Redirecting to direct stream: ${directUrl.substring(0, 100)}...`);
+      console.log(`[miColita LaMovie] [/play/direct] Redirecting to direct stream: ${directUrl.substring(0, 100)}...`);
       return res.redirect(302, directUrl);
     }
   } catch (err) {
-    console.error(`[miColita Anime] [/play/direct] Failed resolving embed to direct link:`, err.message);
+    console.error(`[miColita LaMovie] [/play/direct] Failed resolving embed to direct link:`, err.message);
   }
 
-  console.log(`[miColita Anime] [/play/direct] Redirecting to fallback external url: ${url}`);
+  console.log(`[miColita LaMovie] [/play/direct] Redirecting to fallback external url: ${url}`);
   return res.redirect(302, url);
 });
 
@@ -686,39 +570,39 @@ app.get('/stream/:type/:id.json', async (req, res) => {
   const host = req.get('host');
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
 
-  console.log(`[miColita Anime] Stream request - Type: ${type}, ID: ${id}`);
+  console.log(`[miColita LaMovie] Stream request - Type: ${type}, ID: ${id}`);
 
-  let animeId = '';
-  let episodeNumber = 1;
+  let imdbId = '';
+  let season = 1;
+  let episode = 1;
 
-  if (id.startsWith('kitsu:')) {
+  if (id.startsWith('tt')) {
     const parts = id.split(':');
-    animeId = `kitsu:${parts[1]}`;
-    episodeNumber = parseInt(parts[2] || '1', 10);
-  } else if (id.startsWith('tt')) {
-    const parts = id.split(':');
-    animeId = parts[0];
+    imdbId = parts[0];
     if (parts.length >= 3) {
-      episodeNumber = parseInt(parts[2] || '1', 10);
+      season = parseInt(parts[1] || '1', 10);
+      episode = parseInt(parts[2] || '1', 10);
     }
   } else {
+    // We only support Cinemeta IMDb IDs
     return res.json({ streams: [] });
   }
 
   try {
-    const meta = await getAnimeMeta(animeId, type);
+    const meta = await getContentMeta(imdbId, type);
     if (!meta || !meta.name) {
-      console.log(`[miColita Anime] Could not resolve metadata for ID: ${animeId}`);
+      console.log(`[miColita LaMovie] Could not resolve metadata for ID: ${imdbId}`);
       return res.json({ streams: [] });
     }
 
-    const animeName = meta.name;
-    console.log(`[miColita Anime] Resolved title: "${animeName}" (Episode: ${episodeNumber})`);
+    const title = meta.name;
+    const year = meta.year || '';
+    console.log(`[miColita LaMovie] Resolved title: "${title}" (${year})`);
 
-    const streams = await getAnimeStreams(animeName, episodeNumber, host, protocol);
+    const streams = await getContentStreams(title, year, type, season, episode, host, protocol);
     return res.json({ streams });
   } catch (err) {
-    console.error(`[miColita Anime] Error processing streams for ${id}:`, err.message);
+    console.error(`[miColita LaMovie] Error processing streams for ${id}:`, err.message);
     return res.json({ streams: [] });
   }
 });

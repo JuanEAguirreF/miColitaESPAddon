@@ -815,6 +815,29 @@ async function resolveJKPlayerUrl(url, referer) {
   }
 }
 
+async function resolveGoodstreamUrl(url, referer) {
+  debugLog("Goodstream", "Resolving URL", url);
+  try {
+    const { html } = await fetchHtmlWithHeaders(url, referer);
+    const m3u8Match = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
+    if (m3u8Match && m3u8Match[1]) {
+      const candidate = normalizeExtractedUrl(m3u8Match[1]);
+      if (candidate && !candidate.startsWith("blob:")) {
+        debugLog("Goodstream", "Found m3u8", candidate);
+        return decodeIfEncoded(candidate);
+      }
+    }
+  } catch (err) {
+    debugLog("Goodstream", "Error in Axios resolution", err.message);
+  }
+  return await resolveEmbedWithPuppeteer(url, referer);
+}
+
+async function resolveVimeosUrl(url, referer) {
+  debugLog("Vimeos", "Resolving URL", url);
+  return await resolveEmbedWithPuppeteer(url, referer);
+}
+
 async function resolveEmbedUrl(url, record, candidate) {
   if (!url) {
     return null;
@@ -851,6 +874,20 @@ async function resolveEmbedUrl(url, record, candidate) {
     if (fileId) {
       return `https://pixeldrain.com/api/file/${fileId}`;
     }
+  }
+
+  if (/goodstream/i.test(host)) {
+    debugLog("resolveEmbed", "Using Goodstream resolver", null);
+    const resolved = await resolveGoodstreamUrl(url, referer);
+    if (!resolved) throw new Error("No se pudo resolver enlace directo en Goodstream");
+    return resolved;
+  }
+
+  if (/vimeos/i.test(host)) {
+    debugLog("resolveEmbed", "Using Vimeos resolver", null);
+    const resolved = await resolveVimeosUrl(url, referer);
+    if (!resolved) throw new Error("No se pudo resolver enlace directo en Vimeos");
+    return resolved;
   }
 
   if (/streamwish|sfastwish|flaswish/i.test(host)) {

@@ -1,7 +1,7 @@
 {
-  "name": "micolita-anime-stremio-addon",
-  "version": "1.0.0",
-  "description": "Stremio addon for watching Anime in Spanish. Powered by AnimeAV1, AnimeFLV, TioAnime, MonosChinos, JKAnime.",
+  "name": "micolita-esp-stremio-addon",
+  "version": "1.2.0",
+  "description": "Stremio addon for watching Movies and Series in Spanish. Powered by LaMovie.org.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

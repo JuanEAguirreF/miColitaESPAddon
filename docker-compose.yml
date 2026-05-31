@@ -1,16 +1,28 @@
 version: '3.8'
 
 services:
-  micolita-anime-addon:
-    build: .
-    container_name: micolita-anime-stremio
+  micoesp-stre:
+    image: node:20-slim
+    container_name: micoesp-stre
     restart: unless-stopped
     ports:
-      - "7001:7000"
+      - "7002:7000" # Mapea el puerto 7002 del VPS al puerto 7000 del contenedor
+    working_dir: /app
     environment:
       - PORT=7000
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+    entrypoint: >
+      sh -c " apt-get update && apt-get install -y chromium git ca-certificates fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 --no-install-recommends && rm -rf /var/lib/apt/lists/* && if [ ! -d \".git\" ]; then git clone https://github.com/JuanEAguirreF/miColitaESPAddon.git .; else git reset --hard && git pull origin main; fi && npm install -g pnpm && pnpm install --ignore-scripts && node index.js "
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+
+  micolita-esp-tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: micoesp-stre-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token eyJ...
+    depends_on:
+      - micoesp-stre
