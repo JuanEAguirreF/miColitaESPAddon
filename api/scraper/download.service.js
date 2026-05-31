@@ -592,28 +592,109 @@ async function resolveFembedUrl(url, referer) {
   }
 }
 
+function rot13(str) {
+  return str.replace(/[a-zA-Z]/g, function(c) {
+    return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
+  });
+}
+
+function decryptVoeMethod8(obfuscatedStr) {
+  try {
+    // Step 3: Apply ROT13 to the obfuscated string.
+    let rot13Str = rot13(obfuscatedStr);
+
+    // Step 4: Clean the following obfuscation markers: @$, ^^, ~@, %?, *~, !!, #&.
+    const markers = [/@\$/, /\^\^/, /~@/, /%\?/, /\*~/, /!!/, /#&/];
+    let cleanedStr = rot13Str;
+    for (const marker of markers) {
+      cleanedStr = cleanedStr.replace(new RegExp(marker, 'g'), '');
+    }
+
+    // Step 5: Base64 decode the resulting string.
+    let decodedBuffer = Buffer.from(cleanedStr, 'base64');
+
+    // Step 6: Perform a character shift (subtract 3 from each character's ASCII code point).
+    let shiftedStr = '';
+    for (let i = 0; i < decodedBuffer.length; i++) {
+      shiftedStr += String.fromCharCode(decodedBuffer[i] - 3);
+    }
+
+    // Step 7: Reverse the string.
+    let reversedStr = shiftedStr.split('').reverse().join('');
+
+    // Step 8: Base64 decode a second time.
+    let finalJsonStr = Buffer.from(reversedStr, 'base64').toString('utf8');
+
+    // Step 9: Parse the final JSON.
+    const finalJson = JSON.parse(finalJsonStr);
+    return finalJson;
+  } catch (err) {
+    debugLog("VOE", "Decryption failed: " + err.message);
+    return null;
+  }
+}
+
+function extractFromVoeHtml(html) {
+  const jsonScriptMatch = html.match(/<script type="application\/json">([\s\S]*?)<\/script>/);
+  if (jsonScriptMatch) {
+    try {
+      const jsonArr = JSON.parse(jsonScriptMatch[1]);
+      const obfuscatedStr = jsonArr[0];
+      if (obfuscatedStr) {
+        debugLog("VOE", "Found obfuscated JSON script, decrypting...");
+        const decrypted = decryptVoeMethod8(obfuscatedStr);
+        if (decrypted) {
+          const directUrl = decrypted.source || decrypted.direct_access_url;
+          if (directUrl) {
+            debugLog("VOE", "Decryption successful, direct URL: " + directUrl);
+            return directUrl;
+          }
+        }
+      }
+    } catch (e) {
+      debugLog("VOE", "Failed to parse/decrypt script JSON: " + e.message);
+    }
+  }
+  return null;
+}
+
 async function resolveVoeUrl(url, referer) {
   debugLog("VOE", "Resolving URL", url);
   try {
     const { html, headers } = await fetchHtmlWithHeaders(url, referer);
     debugLog("VOE", "Fetched HTML length", html.length);
 
-    // Check for redirect in page
+    // 1. Try decrypting immediately from the fetched page
+    const directUrl = extractFromVoeHtml(html);
+    if (directUrl) {
+      return directUrl;
+    }
+
+    // 2. Check for redirect in page
     const redirectMatch = html.match(/window\.location\.href\s*=\s*['"](https?:\/\/[^'"]+)['"]/i);
     if (redirectMatch && redirectMatch[1]) {
       debugLog("VOE", "Following redirect to", redirectMatch[1]);
       const redirectHtml = await fetchHtmlWithHeaders(redirectMatch[1], referer);
+      
+      // Try decrypting from redirect page
+      const redirectDirectUrl = extractFromVoeHtml(redirectHtml.html);
+      if (redirectDirectUrl) {
+        return redirectDirectUrl;
+      }
+
+      // Regex fallback on redirect page
       const extracted = findFirstUrl(redirectHtml.html, [
         /sources?\s*:\s*\[\s*\{[^}]*src\s*:\s*["']([^"']+)["']/i,
         /"file"\s*:\s*"([^"]+)"/i,
         /(https?:\/\/[^\s"'<>]+\.(?:mp4|m3u8)[^\s"'<>]*)/i,
       ]);
       if (extracted) {
-        debugLog("VOE", "Found URL via redirect", extracted);
+        debugLog("VOE", "Found URL via redirect regex", extracted);
         return extracted;
       }
     }
 
+    // 3. Original regex fallback on main page
     const extracted = findFirstUrl(html, [
       /sources?\s*:\s*\[\s*\{[^}]*src\s*:\s*["']([^"']+)["']/i,
       /"file"\s*:\s*"([^"]+)"/i,
@@ -621,7 +702,7 @@ async function resolveVoeUrl(url, referer) {
     ]);
 
     if (extracted) {
-      debugLog("VOE", "Found URL", extracted);
+      debugLog("VOE", "Found URL via regex fallback", extracted);
       return extracted;
     }
 
@@ -975,7 +1056,12 @@ async function resolveEmbedUrl(url, record, candidate) {
     debugLog("resolveEmbed", "Using VOE resolver", null);
     const resolved = await resolveVoeUrl(url, referer);
     if (resolved) return resolved;
-    // Don't throw if it was a dynamic domain catch, let it fallback to Puppeteer
+    
+    // Fallback to Puppeteer for dynamic obfuscated VOE page
+    debugLog("resolveEmbed", "VOE regex failed, falling back to Puppeteer...", null);
+    const puppeteerResolved = await resolveEmbedWithPuppeteer(url, referer);
+    if (puppeteerResolved) return puppeteerResolved;
+    
     if (/voe\.sx/i.test(host)) {
       throw new Error("No se pudo resolver enlace directo en VOE");
     }
