@@ -562,6 +562,37 @@ app.get('/play/direct', async (req, res) => {
   return res.redirect(302, url);
 });
 
+// TMDB Spanish title translation helper
+const tmdbApiKeys = [
+  "10923b261ba94d897ac6b81148314a3f",
+  "b573d051ec65413c949e68169923f7ff",
+  "da40aaeca884d8c9a9a4c088917c474c"
+];
+
+async function getSpanishTitle(imdbId, type) {
+  const resolvedType = type === 'movie' ? 'movie' : 'tv';
+  for (const apiKey of tmdbApiKeys) {
+    try {
+      const url = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${apiKey}&external_source=imdb_id&language=es-MX`;
+      const response = await axios.get(url, { timeout: 4000 });
+      const data = response.data;
+      if (data) {
+        const tvResults = data.tv_results || [];
+        const movieResults = data.movie_results || [];
+        if (tvResults.length > 0 && tvResults[0].name) {
+          return tvResults[0].name;
+        }
+        if (movieResults.length > 0 && movieResults[0].title) {
+          return movieResults[0].title;
+        }
+      }
+    } catch (e) {
+      // Fail silently to try next key
+    }
+  }
+  return null;
+}
+
 // Universal Stremio Stream Route supporting all prefixes
 app.get('/stream/:type/:id.json', async (req, res) => {
   let { type, id } = req.params;
@@ -597,9 +628,30 @@ app.get('/stream/:type/:id.json', async (req, res) => {
 
     const title = meta.name;
     const year = meta.year || '';
-    console.log(`[miColita LaMovie] Resolved title: "${title}" (${year})`);
+    console.log(`[miColita LaMovie] Resolved Cinemeta title: "${title}" (${year})`);
 
-    const streams = await getContentStreams(title, year, type, season, episode, host, protocol);
+    // Try to get Spanish title from TMDB
+    let spanishTitle = null;
+    try {
+      spanishTitle = await getSpanishTitle(imdbId, type);
+      if (spanishTitle) {
+        console.log(`[miColita LaMovie] Resolved Spanish title from TMDB: "${spanishTitle}"`);
+      }
+    } catch (e) {
+      console.error(`[miColita LaMovie] TMDB Translation Error:`, e.message);
+    }
+
+    // Try fetching with Spanish title first
+    let streams = [];
+    if (spanishTitle && cleanName(spanishTitle) !== cleanName(title)) {
+      streams = await getContentStreams(spanishTitle, year, type, season, episode, host, protocol);
+    }
+
+    // Fallback/alternative: if no streams found or no Spanish title, use English/Cinemeta title
+    if (streams.length === 0) {
+      streams = await getContentStreams(title, year, type, season, episode, host, protocol);
+    }
+
     return res.json({ streams });
   } catch (err) {
     console.error(`[miColita LaMovie] Error processing streams for ${id}:`, err.message);
