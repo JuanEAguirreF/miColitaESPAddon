@@ -124,12 +124,41 @@ async function getContentStreams(title, year, type, season, episode, host, proto
 
     if (embeds && embeds.length > 0) {
       console.log(`[miColita LaMovie] [Scraper] Found ${embeds.length} embeds on LaMovie.org`);
+      
+      // Sort embeds by playback reliability (non-IP locked servers like VOE first)
+      embeds.sort((a, b) => {
+        const getScore = (url) => {
+          const u = url.toLowerCase();
+          if (u.includes('voe')) return 10;
+          if (u.includes('filemoon')) return 8;
+          if (u.includes('hlswish') || u.includes('streamwish')) return 6;
+          if (u.includes('goodstream')) return 4;
+          if (u.includes('vimeos')) return 2;
+          return 1;
+        };
+        return getScore(b.url) - getScore(a.url);
+      });
+
       embeds.forEach((embed) => {
-        const serverName = (embed.server || 'Online').toUpperCase();
+        // Resolve clean server name based on domain
+        let serverName = 'Online';
+        try {
+          const hostName = new URL(embed.url).hostname.toLowerCase();
+          if (hostName.includes('voe')) serverName = 'VOE';
+          else if (hostName.includes('vimeos')) serverName = 'Vimeos';
+          else if (hostName.includes('goodstream')) serverName = 'Goodstream';
+          else if (hostName.includes('hlswish') || hostName.includes('streamwish')) serverName = 'Streamwish';
+          else if (hostName.includes('filemoon')) serverName = 'Filemoon';
+          else if (embed.server) serverName = embed.server;
+        } catch (e) {
+          if (embed.server) serverName = embed.server;
+        }
+        serverName = serverName.toUpperCase();
+        
         const langName = (embed.lang || 'Latino').toUpperCase();
         const qualityName = (embed.quality || 'HD').toUpperCase();
         
-        const playDirectUrl = `${protocol}://${host}/play/direct?url=${encodeURIComponent(embed.url)}&id=${cleanName(title)}_${type === 'movie' ? 'movie' : 'S' + season + 'E' + episode}_${cleanName(embed.server)}`;
+        const playDirectUrl = `${protocol}://${host}/play/direct?url=${encodeURIComponent(embed.url)}&id=${cleanName(title)}_${type === 'movie' ? 'movie' : 'S' + season + 'E' + episode}_${cleanName(serverName)}`;
 
         // 1. [NATIVO] Direct play redirect stream (plays inside Stremio)
         streams.push({
