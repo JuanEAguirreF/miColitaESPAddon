@@ -1027,7 +1027,7 @@ async function resolveEmbedUrl(url, record, candidate) {
     return resolved;
   }
 
-  if (/vidhidevip|vidhide/i.test(host)) {
+  if (/vidhidevip|vidhide|callistanise|earnvids/i.test(host)) {
     debugLog("resolveEmbed", "Using Vidhide resolver", null);
     const resolved = await resolveVidhideUrl(url, referer);
     if (resolved) return resolved;
@@ -1068,7 +1068,7 @@ async function resolveEmbedUrl(url, record, candidate) {
   }
 
   // 3. PUPPETEER PROTECTED SITE FALLBACK
-  const isProtectedSite = /animeflv|streamwish|vidhide|mixdrop/i.test(host);
+  const isProtectedSite = /animeflv|streamwish|vidhide|callistanise|earnvids|turbovid|strp2p|upns|4meplayer|rpmstream|mixdrop/i.test(host);
   if (isProtectedSite) {
     debugLog("resolveEmbed", "Using puppeteer for protected site", null);
     const resolved = await resolveEmbedWithPuppeteer(url, referer);

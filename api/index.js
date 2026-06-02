@@ -8,16 +8,17 @@ const corsMiddleware = require('cors');
 // Scraper services
 const { resolveEmbedUrl } = require('./scraper/download.service');
 const lamovieService = require('./scraper/lamovie.service');
+const tioplusService = require('./scraper/tioplus.service');
 
 const app = express();
 app.use(corsMiddleware());
 
-// Addon Manifest Definition for miColita LaMovie
+// Addon Manifest Definition for miColita Esp
 const MANIFEST = {
-  id: 'org.micolita.lamovie.addon',
-  version: '1.2.0',
-  name: 'miColita LaMovie',
-  description: 'Addon de Stremio premium para ver Películas y Series en Español de LaMovie.org. Enlaces directos sin publicidad y reproducción nativa.',
+  id: 'org.micolita.esp.addon',
+  version: '1.3.0',
+  name: 'miColita Esp',
+  description: 'Addon de Stremio premium para ver Películas y Series en Español de LaMovie y TioPlus. Enlaces directos sin publicidad y reproducción nativa.',
   logo: 'https://i.imgur.com/G55nEqA.png',
   background: 'https://i.imgur.com/3cPhFmg.jpeg',
   resources: ['stream'],
@@ -53,7 +54,7 @@ async function getContentMeta(id, type) {
   const now = Date.now();
 
   if (cached && (now - cached.timestamp < CACHE_TTL_META)) {
-    console.log(`[miColita LaMovie] [Cache] Metadata for ${id} loaded from cache.`);
+    console.log(`[miColita ESP] [Cache] Metadata for ${id} loaded from cache.`);
     return cached.data;
   }
 
@@ -61,7 +62,7 @@ async function getContentMeta(id, type) {
     if (id.startsWith('tt')) {
       const resolvedType = type === 'movie' ? 'movie' : 'series';
       const url = `https://v3-cinemeta.strem.io/meta/${resolvedType}/${id}.json`;
-      console.log(`[miColita LaMovie] [Meta] Fetching Cinemeta metadata from: ${url}`);
+      console.log(`[miColita ESP] [Meta] Fetching Cinemeta metadata from: ${url}`);
       const response = await axios.get(url, { timeout: 10000 });
       if (response.data && response.data.meta) {
         metaCache.set(cacheKey, { data: response.data.meta, timestamp: now });
@@ -69,7 +70,7 @@ async function getContentMeta(id, type) {
       }
     }
   } catch (e) {
-    console.error(`[miColita LaMovie] [Meta] Error resolving metadata for ${id}:`, e.message);
+    console.error(`[miColita ESP] [Meta] Error resolving metadata for ${id}:`, e.message);
   }
   return null;
 }
@@ -80,25 +81,25 @@ async function resolveToDirectLink(id, embedUrl) {
   const now = Date.now();
 
   if (cached && (now - cached.timestamp < CACHE_TTL_DIRECT)) {
-    console.log(`[miColita LaMovie] [Cache] Direct video link loaded from cache.`);
+    console.log(`[miColita ESP] [Cache] Direct video link loaded from cache.`);
     return cached.url;
   }
 
-  console.log(`[miColita LaMovie] [Direct] Resolving embed: ${embedUrl} in real-time...`);
+  console.log(`[miColita ESP] [Direct] Resolving embed: ${embedUrl} in real-time...`);
   try {
     const directUrl = await resolveEmbedUrl(embedUrl);
     if (directUrl) {
-      console.log(`[miColita LaMovie] [Direct] Successfully resolved direct URL: ${directUrl.substring(0, 120)}...`);
+      console.log(`[miColita ESP] [Direct] Successfully resolved direct URL: ${directUrl.substring(0, 120)}...`);
       directLinkCache.set(id, { url: directUrl, timestamp: now });
       return directUrl;
     }
   } catch (err) {
-    console.error(`[miColita LaMovie] [Direct] Error resolving embed to direct link:`, err.message);
+    console.error(`[miColita ESP] [Direct] Error resolving embed to direct link:`, err.message);
   }
   return null;
 }
 
-// Fetch streams from LaMovie scraper
+// Fetch streams from LaMovie & TioPlus scrapers in parallel
 async function getContentStreams(title, year, type, season, episode, host, protocol) {
   const cacheKey = type === 'movie' 
     ? `${cleanName(title)}:${year || 'any'}`
@@ -108,38 +109,99 @@ async function getContentStreams(title, year, type, season, episode, host, proto
   const now = Date.now();
 
   if (cached && (now - cached.timestamp < CACHE_TTL_STREAMS)) {
-    console.log(`[miColita LaMovie] [Cache] Streams loaded from cache for key: ${cacheKey}`);
+    console.log(`[miColita ESP] [Cache] Streams loaded from cache for key: ${cacheKey}`);
     return cached.data;
   }
 
   const streams = [];
   try {
-    console.log(`[miColita LaMovie] [Scraper] Resolving streams for: "${title}" (${year || ''}), Type: ${type}`);
-    let embeds = [];
-    if (type === 'movie') {
-      embeds = await lamovieService.getMovieStreams(title, year);
-    } else {
-      embeds = await lamovieService.getSeriesStreams(title, season, episode);
+    console.log(`[miColita ESP] [Scraper] Resolving streams for: "${title}" (${year || ''}), Type: ${type}`);
+    
+    // Fetch from both sources in parallel to keep execution sub-second/realtime-ready
+    const [lamovieEmbeds, tioplusEmbeds] = await Promise.all([
+      (async () => {
+        try {
+          if (type === 'movie') {
+            return await lamovieService.getMovieStreams(title, year);
+          } else {
+            return await lamovieService.getSeriesStreams(title, season, episode);
+          }
+        } catch (e) {
+          console.error(`[miColita ESP] [LaMovie Scraper] Error getting streams:`, e.message);
+          return [];
+        }
+      })(),
+      (async () => {
+        try {
+          if (type === 'movie') {
+            return await tioplusService.getMovieStreams(title, year);
+          } else {
+            return await tioplusService.getSeriesStreams(title, season, episode);
+          }
+        } catch (e) {
+          console.error(`[miColita ESP] [TioPlus Scraper] Error getting streams:`, e.message);
+          return [];
+        }
+      })()
+    ]);
+
+    const mergedEmbeds = [];
+
+    // Tag and push LaMovie streams
+    if (lamovieEmbeds && lamovieEmbeds.length > 0) {
+      console.log(`[miColita ESP] [Scraper] Found ${lamovieEmbeds.length} embeds on LaMovie.org`);
+      lamovieEmbeds.forEach(emb => {
+        mergedEmbeds.push({ ...emb, source: 'LAMOVIE' });
+      });
     }
 
-    if (embeds && embeds.length > 0) {
-      console.log(`[miColita LaMovie] [Scraper] Found ${embeds.length} embeds on LaMovie.org`);
-      
-      // Sort embeds by playback reliability (non-IP locked servers like VOE first)
-      embeds.sort((a, b) => {
-        const getScore = (url) => {
-          const u = url.toLowerCase();
-          if (u.includes('voe')) return 10;
-          if (u.includes('filemoon')) return 8;
-          if (u.includes('hlswish') || u.includes('streamwish')) return 6;
-          if (u.includes('goodstream')) return 4;
-          if (u.includes('vimeos')) return 2;
+    // Tag and push TioPlus streams
+    if (tioplusEmbeds && tioplusEmbeds.length > 0) {
+      console.log(`[miColita ESP] [Scraper] Found ${tioplusEmbeds.length} embeds on TioPlus.app`);
+      tioplusEmbeds.forEach(emb => {
+        mergedEmbeds.push({ ...emb, source: 'TIOPLUS' });
+      });
+    }
+
+    if (mergedEmbeds.length > 0) {
+      // Sort embeds by playback reliability (non-IP locked servers like VOE first, followed by others)
+      mergedEmbeds.sort((a, b) => {
+        const getScore = (embed) => {
+          const u = embed.url.toLowerCase();
+          const s = (embed.server || '').toLowerCase();
+          
+          // 1. VOE is the most reliable (no IP locking)
+          if (u.includes('voe')) return 100;
+          
+          // 2. Vidhide / Earnvids / Callistanise are extremely fast and reliable
+          if (u.includes('vidhide') || u.includes('callistanise') || u.includes('earnvids') || s.includes('earnvids')) return 80;
+          
+          // 3. Filemoon and Mixdrop
+          if (u.includes('filemoon')) return 70;
+          if (u.includes('mixdrop')) return 65;
+          
+          // 4. Streamwish
+          if (u.includes('hlswish') || u.includes('streamwish')) return 60;
+          
+          // 5. Goodstream and Vimeos
+          if (u.includes('goodstream')) return 50;
+          if (u.includes('vimeos')) return 40;
+          
+          // 6. TioPlus Turbovid
+          if (u.includes('turbovid') || s.includes('tioplus')) return 30;
+          
+          // 7. Light servers (P2P, Upfast, Player, RPM)
+          if (s.includes('p2p')) return 20;
+          if (s.includes('upfast') || u.includes('upns.pro')) return 18;
+          if (s.includes('player') || u.includes('4meplayer.pro')) return 15;
+          if (s.includes('rpm') || u.includes('rpmstream')) return 12;
+          
           return 1;
         };
-        return getScore(b.url) - getScore(a.url);
+        return getScore(b) - getScore(a);
       });
 
-      embeds.forEach((embed) => {
+      mergedEmbeds.forEach((embed) => {
         // Resolve clean server name based on domain
         let serverName = 'Online';
         try {
@@ -149,36 +211,40 @@ async function getContentStreams(title, year, type, season, episode, host, proto
           else if (hostName.includes('goodstream')) serverName = 'Goodstream';
           else if (hostName.includes('hlswish') || hostName.includes('streamwish')) serverName = 'Streamwish';
           else if (hostName.includes('filemoon')) serverName = 'Filemoon';
+          else if (hostName.includes('vidhide') || hostName.includes('callistanise') || hostName.includes('earnvids')) serverName = 'Vidhide';
+          else if (hostName.includes('turbovid')) serverName = 'Turbovid';
           else if (embed.server) serverName = embed.server;
         } catch (e) {
           if (embed.server) serverName = embed.server;
         }
+        
         serverName = serverName.toUpperCase();
         
         const langName = (embed.lang || 'Latino').toUpperCase();
         const qualityName = (embed.quality || 'HD').toUpperCase();
+        const sourceTag = embed.source || 'ADDON';
         
-        const playDirectUrl = `${protocol}://${host}/play/direct?url=${encodeURIComponent(embed.url)}&id=${cleanName(title)}_${type === 'movie' ? 'movie' : 'S' + season + 'E' + episode}_${cleanName(serverName)}`;
+        const playDirectUrl = `${protocol}://${host}/play/direct?url=${encodeURIComponent(embed.url)}&id=${cleanName(title)}_${type === 'movie' ? 'movie' : 'S' + season + 'E' + episode}_${cleanName(serverName)}_${sourceTag}`;
 
         // 1. [NATIVO] Direct play redirect stream (plays inside Stremio)
         streams.push({
-          name: `miColita\nLaMovie`,
+          name: `miColita\nEsp`,
           type: 'url',
-          title: `⭐ [NATIVO] [${langName}] ${serverName} (${qualityName})\n🎬 Reproducción nativa en reproductor interno\n⚡ Resolvedor inteligente de video en tiempo real`,
+          title: `⭐ [NATIVO] [${langName}] ${serverName} (${qualityName}) [${sourceTag}]\n🎬 Reproducción nativa en reproductor interno\n⚡ Resolvedor inteligente de video en tiempo real`,
           url: playDirectUrl
         });
 
         // 2. [EMBED] Standard redirect embed (opens in browser as backup)
         streams.push({
-          name: `miColita\nLaMovie`,
+          name: `miColita\nEsp`,
           type: 'embed',
-          title: `🔗 [EMBED] [${langName}] ${serverName} (${qualityName})\n🌐 Abre en el navegador (Opción tradicional)`,
+          title: `🔗 [EMBED] [${langName}] ${serverName} (${qualityName}) [${sourceTag}]\n🌐 Abre en el navegador (Opción tradicional)`,
           externalUrl: embed.url
         });
       });
     }
   } catch (err) {
-    console.error(`[miColita LaMovie] [Scraper] Error getting streams:`, err.message);
+    console.error(`[miColita ESP] [Scraper] Error getting streams:`, err.message);
   }
 
   if (streams.length > 0) {
@@ -199,8 +265,8 @@ function getLandingPageHtml(host, protocol) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>miColita LaMovie | Stremio Addon</title>
-    <meta name="description" content="Addon premium de Stremio para ver películas y series en español de forma nativa, veloz y sin publicidad.">
+    <title>miColita Esp | Stremio Addon</title>
+    <meta name="description" content="Addon premium de Stremio para ver películas y series en español de LaMovie y TioPlus de forma nativa, veloz y sin publicidad.">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -486,7 +552,7 @@ function getLandingPageHtml(host, protocol) {
                 </div>
             </div>
             
-            <h1>miColita LaMovie</h1>
+            <h1>miColita Esp</h1>
             <p class="subtitle">Disfruta de las mejores películas y series en Stremio con audio Español (Latino o Castellano) de forma nativa, ultra rápida y libre de publicidad.</p>
             
             <div style="display: flex; flex-direction: column; align-items: center; width: 100%;">
@@ -508,18 +574,18 @@ function getLandingPageHtml(host, protocol) {
 
             <div class="features">
                 <div class="feature-card">
-                    <i class="fa-solid fa-photo-film"></i>
-                    <h3>Catálogo LaMovie</h3>
-                    <p>Acceso completo y directo a las series y películas del catálogo en español de LaMovie.org.</p>
+                    <i class="fa-solid fa-cubes"></i>
+                    <h3>Multiproveedor Premium</h3>
+                    <p>Acceso integrado a los catálogos en español de LaMovie.org y TioPlus.app en paralelo.</p>
                 </div>
                 <div class="feature-card">
                     <i class="fa-solid fa-language"></i>
-                    <h3>Audio Latino / Doblajes</h3>
+                    <h3>Audio Latino / Castellano</h3>
                     <p>Soporte de múltiples variantes de doblajes en español e idiomas originales.</p>
                 </div>
                 <div class="feature-card">
-                    <i class="fa-solid fa-circle-play"></i>
-                    <h3>Reproductor Nativo</h3>
+                    <i class="fa-solid =fa-circle-play"></i>
+                    <h3>Reproducción Directa</h3>
                     <p>Conversión en tiempo real a enlaces M3U8/MP4 para reproducir directamente en la app sin anuncios.</p>
                 </div>
             </div>
@@ -575,19 +641,19 @@ app.get('/play/direct', async (req, res) => {
     return res.status(400).send('Falta el parámetro url');
   }
 
-  console.log(`[miColita LaMovie] [/play/direct] Request to resolve direct link for: ${id} (${url})`);
+  console.log(`[miColita ESP] [/play/direct] Request to resolve direct link for: ${id} (${url})`);
 
   try {
     const directUrl = await resolveToDirectLink(url, url);
     if (directUrl) {
-      console.log(`[miColita LaMovie] [/play/direct] Redirecting to direct stream: ${directUrl.substring(0, 100)}...`);
+      console.log(`[miColita ESP] [/play/direct] Redirecting to direct stream: ${directUrl.substring(0, 100)}...`);
       return res.redirect(302, directUrl);
     }
   } catch (err) {
-    console.error(`[miColita LaMovie] [/play/direct] Failed resolving embed to direct link:`, err.message);
+    console.error(`[miColita ESP] [/play/direct] Failed resolving embed to direct link:`, err.message);
   }
 
-  console.log(`[miColita LaMovie] [/play/direct] Redirecting to fallback external url: ${url}`);
+  console.log(`[miColita ESP] [/play/direct] Redirecting to fallback external url: ${url}`);
   return res.redirect(302, url);
 });
 
@@ -630,7 +696,7 @@ app.get('/stream/:type/:id.json', async (req, res) => {
   const host = req.get('host');
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
 
-  console.log(`[miColita LaMovie] Stream request - Type: ${type}, ID: ${id}`);
+  console.log(`[miColita ESP] Stream request - Type: ${type}, ID: ${id}`);
 
   let imdbId = '';
   let season = 1;
@@ -651,23 +717,23 @@ app.get('/stream/:type/:id.json', async (req, res) => {
   try {
     const meta = await getContentMeta(imdbId, type);
     if (!meta || !meta.name) {
-      console.log(`[miColita LaMovie] Could not resolve metadata for ID: ${imdbId}`);
+      console.log(`[miColita ESP] Could not resolve metadata for ID: ${imdbId}`);
       return res.json({ streams: [] });
     }
 
     const title = meta.name;
     const year = meta.year || '';
-    console.log(`[miColita LaMovie] Resolved Cinemeta title: "${title}" (${year})`);
+    console.log(`[miColita ESP] Resolved Cinemeta title: "${title}" (${year})`);
 
     // Try to get Spanish title from TMDB
     let spanishTitle = null;
     try {
       spanishTitle = await getSpanishTitle(imdbId, type);
       if (spanishTitle) {
-        console.log(`[miColita LaMovie] Resolved Spanish title from TMDB: "${spanishTitle}"`);
+        console.log(`[miColita ESP] Resolved Spanish title from TMDB: "${spanishTitle}"`);
       }
     } catch (e) {
-      console.error(`[miColita LaMovie] TMDB Translation Error:`, e.message);
+      console.error(`[miColita ESP] TMDB Translation Error:`, e.message);
     }
 
     // Try fetching with Spanish title first
@@ -683,7 +749,7 @@ app.get('/stream/:type/:id.json', async (req, res) => {
 
     return res.json({ streams });
   } catch (err) {
-    console.error(`[miColita LaMovie] Error processing streams for ${id}:`, err.message);
+    console.error(`[miColita ESP] Error processing streams for ${id}:`, err.message);
     return res.json({ streams: [] });
   }
 });
