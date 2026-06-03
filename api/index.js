@@ -88,10 +88,12 @@ async function resolveToDirectLink(id, embedUrl) {
   console.log(`[miColita ESP] [Direct] Resolving embed: ${embedUrl} in real-time...`);
   try {
     const directUrl = await resolveEmbedUrl(embedUrl);
-    if (directUrl) {
+    if (directUrl && directUrl !== embedUrl) {
       console.log(`[miColita ESP] [Direct] Successfully resolved direct URL: ${directUrl.substring(0, 120)}...`);
       directLinkCache.set(id, { url: directUrl, timestamp: now });
       return directUrl;
+    } else {
+      console.log(`[miColita ESP] [Direct] Failed to resolve to a direct link (returned fallback).`);
     }
   } catch (err) {
     console.error(`[miColita ESP] [Direct] Error resolving embed to direct link:`, err.message);
@@ -207,7 +209,7 @@ async function getContentStreams(title, year, type, season, episode, host, proto
         try {
           const hostName = new URL(embed.url).hostname.toLowerCase();
           if (hostName.includes('voe')) serverName = 'VOE';
-          else if (hostName.includes('vimeos')) serverName = 'Vimeos';
+          else if (hostName.includes('vimeos') || hostName.includes('vimeus')) serverName = 'Vimeos';
           else if (hostName.includes('goodstream')) serverName = 'Goodstream';
           else if (hostName.includes('hlswish') || hostName.includes('streamwish')) serverName = 'Streamwish';
           else if (hostName.includes('filemoon')) serverName = 'Filemoon';
@@ -234,13 +236,15 @@ async function getContentStreams(title, year, type, season, episode, host, proto
           url: playDirectUrl
         });
 
-        // 2. [EMBED] Standard redirect embed (opens in browser as backup)
-        streams.push({
-          name: `miColita\nEsp`,
-          type: 'embed',
-          title: `🔗 [EMBED] [${langName}] ${serverName} (${qualityName}) [${sourceTag}]\n🌐 Abre en el navegador (Opción tradicional)`,
-          externalUrl: embed.url
-        });
+        // 2. [EMBED] Standard redirect embed (opens in browser as backup) - Only kept for VIMEOS / VIMEUS
+        if (serverName === 'VIMEOS' || serverName === 'VIMEUS') {
+          streams.push({
+            name: `miColita\nEsp`,
+            type: 'embed',
+            title: `🔗 [EMBED] [${langName}] ${serverName} (${qualityName}) [${sourceTag}]\n🌐 Abre en el navegador (Opción tradicional)`,
+            externalUrl: embed.url
+          });
+        }
       });
     }
   } catch (err) {

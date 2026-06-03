@@ -1,9 +1,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { randomUUID } = require("node:crypto");
+const crypto = require("node:crypto");
+const { randomUUID } = crypto;
 const { pipeline } = require("node:stream/promises");
 const axios = require("axios");
 const cheerio = require("cheerio");
+const p2pStringsMap = require("./strings_map.json");
 let ffmpegPath, ffmpeg;
 try {
   ffmpegPath = require("ffmpeg-static");
@@ -919,6 +921,211 @@ async function resolveVimeosUrl(url, referer) {
   return await resolveEmbedWithPuppeteer(url, referer);
 }
 
+// P2P / UPFAST / PLAYER / RPMSTREAM decrypter helpers
+function getP2PKey() {
+  if (!p2pStringsMap) return null;
+  const r = n => p2pStringsMap[n];
+  const o = "https:", l = "10", m = 110, I = 1;
+  let C = "";
+  const v = ("7519").split(""); // "ᵟ".codePointAt(0) is 7519
+  const k = (...arr) => String.fromCodePoint(...arr);
+  const y = (str, idx) => str.codePointAt(idx) || 0;
+  for (let H = 0; H < v.length; H++) {
+    C += k(parseInt(l + v[H]));
+  }
+  C += k(y(o, l / 10));
+  C += C.slice(1, 3);
+  C += k(m, m - 1, m + 7);
+  const M = r(280).split("");
+  C += k(parseInt(M[3] + M[2]), parseInt(M[1] + M[2]));
+  C += k(parseInt(M[0] * I + I + M[3]), parseInt(M[0] * I + I + M[3]));
+  
+  const m3_val = parseInt(M[3]);
+  const first_val = m3_val * parseInt(l) + m3_val * I;
+  M.reverse();
+  const reversed_val = M.join("").slice(0, 2);
+  C += k(first_val, parseInt(reversed_val));
+  
+  return new TextEncoder().encode(C);
+}
+
+function getP2PIv(hostname, hash) {
+  if (!p2pStringsMap) return null;
+  const r = n => p2pStringsMap[n];
+  const o = hostname, l = o + "//", m = hash, I = o.length * l.length, C = 1;
+  const k = (...arr) => String.fromCodePoint(...arr);
+  const y = (str, idx) => str.codePointAt(idx) || 0;
+  let v = "";
+  for (let K = C; K < 10; K++) {
+    v += k(K + I);
+  }
+  let M = "";
+  M = C + M + C + M + C;
+  const H = M.length * y(m);
+  const de = parseInt(M) * C + o.length;
+  const T = de + 4;
+  const ee = y(o, C);
+  const X = ee * C - 2;
+  v += k(I, parseInt(M), H, de, T, ee, X);
+  return new TextEncoder().encode(v);
+}
+
+function decryptP2PAES(encHex, keyBytes, ivBytes) {
+  try {
+    const iv16 = ivBytes.slice(0, 16);
+    const decipher = crypto.createDecipheriv('aes-128-cbc', Buffer.from(keyBytes), Buffer.from(iv16));
+    let decrypted = decipher.update(encHex, 'hex');
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return decrypted;
+  } catch (err) {
+    debugLog("P2PDecrypter", "AES Decryption error: " + err.message);
+    return null;
+  }
+}
+
+async function resolveP2PUrl(url, referer) {
+  try {
+    const parsedUrl = new URL(url);
+    const hostname = parsedUrl.hostname;
+    let id = parsedUrl.hash ? parsedUrl.hash.replace('#', '') : null;
+    
+    if (!id) {
+      const parts = parsedUrl.pathname.split('/').filter(Boolean);
+      id = parts[parts.length - 1];
+    }
+    
+    if (!id) {
+      debugLog("P2PDecrypter", "No ID found in URL: " + url);
+      return null;
+    }
+    
+    id = id.split('&')[0];
+    debugLog("P2PDecrypter", `Resolving host: ${hostname}, ID: ${id}`);
+    
+    const refHost = referer ? new URL(referer).hostname.replace('www.', '') : 'tioplus.app';
+    const videoApiUrl = `https://${hostname}/api/v1/video?id=${id}&w=1920&h=1080&r=${refHost}`;
+    
+    const response = await axios.get(videoApiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': `https://${hostname}/`
+      },
+      timeout: 10000
+    });
+    
+    if (!response.data || typeof response.data !== 'string') {
+      debugLog("P2PDecrypter", "Empty or invalid response data");
+      return null;
+    }
+    
+    const encHex = response.data.trim();
+    const key = getP2PKey();
+    const iv = getP2PIv(hostname, `#${id}`);
+    
+    const decryptedBuffer = decryptP2PAES(encHex, key, iv);
+    if (!decryptedBuffer) {
+      return null;
+    }
+    
+    const bodyStart = decryptedBuffer.slice(16, 60).toString('utf8');
+    // Generate all possible prefixes based on the JSON keys in the P2P API response
+    const candidates = [
+      '{"success":true,',
+      '{"success":fals,',
+      '{"version":"1779',
+      '{"visitorCountry',
+      '{"hlsVideoTiktok',
+      '{"cf":"https://',
+      '{"swarmId":"' + id.slice(0, 4),
+      '{"videoId":"' + id.slice(0, 4),
+      '{"torrentTracker',
+      '{"iceServers":[{',
+      '{"streamingConfi',
+      '{"cfExpire":fals',
+      '{"cfExpire":"121',
+      '{"title":"tt0000',
+      '{"title":"' + id.slice(0, 4),
+      '{"thumbnail":"/5',
+      '{"poster":"/aaaa',
+      '{"subtitle":{"es',
+      '{"userId":"png"',
+      '{"userId":"rqz"',
+      '{"session":{"ref',
+      '{"source":"https',
+      // player patterns
+      '{"player":{"allo',
+      '{"player":{"isPr',
+      '{"player":{"id":',
+      '{"player":{"logo',
+      '{"player":{"tran',
+      '{"player":{"rest',
+      '{"player":{"defa',
+      '{"player":{"pick',
+      '{"player":{"user',
+      '{"player":{"ui":',
+      // metric patterns
+      '{"metric":{"user',
+      '{"metric":{"vide',
+      '{"metric":{"play',
+      '{"metric":{"os":',
+      '{"metric":{"brow',
+      '{"metric":{"coun',
+      '{"metric":{"city',
+      '{"metric":{"ipAd',
+      '{"metric":{"impr',
+      '{"metric":{"lang',
+      '{"metric":{"time',
+      '{"metric":{"scre',
+      '{"metric":{"refe',
+      '{"metric":{"stre',
+      '{"metric":{"cfDo',
+      '{"metric":{"plat'
+    ];
+    
+    let parsed = null;
+    let successfulPrefix = null;
+    
+    for (const prefix of candidates) {
+      try {
+        const fixedBuffer = Buffer.from(decryptedBuffer);
+        Buffer.from(prefix).copy(fixedBuffer);
+        const fixedString = fixedBuffer.toString('utf8');
+        parsed = JSON.parse(fixedString);
+        successfulPrefix = prefix;
+        break;
+      } catch (e) {
+        // try next candidate
+      }
+    }
+    
+    debugLog("P2PDecrypter", `BodyStart: "${bodyStart}"`);
+    if (parsed) {
+      debugLog("P2PDecrypter", `Successfully parsed with prefix: "${successfulPrefix}"`);
+      debugLog("P2PDecrypter", "Parsed keys: " + Object.keys(parsed).join(", "));
+      
+      const streamUrl = parsed.source || parsed.cf || (parsed.session && (parsed.session.source || parsed.session.cf));
+      if (streamUrl) {
+        debugLog("P2PDecrypter", "Successfully resolved URL: " + streamUrl);
+        return streamUrl;
+      } else {
+        debugLog("P2PDecrypter", "Parsed successfully but stream URL was empty!");
+      }
+    } else {
+      debugLog("P2PDecrypter", "JSON Parse failed for all prefix candidates.");
+      const codes = [];
+      for (let i = 0; i < Math.min(15, bodyStart.length); i++) {
+        codes.push(bodyStart.charCodeAt(i));
+      }
+      debugLog("P2PDecrypter", "BodyStart char codes: " + codes.join(", "));
+      debugLog("P2PDecrypter", "Fixed string preview: " + fixedString.slice(0, 200));
+    }
+  } catch (err) {
+    debugLog("P2PDecrypter", "Error: " + err.message);
+  }
+  return null;
+}
+
 async function resolveEmbedUrl(url, record, candidate) {
   if (!url) {
     return null;
@@ -1067,8 +1274,16 @@ async function resolveEmbedUrl(url, record, candidate) {
     }
   }
 
-  // 3. PUPPETEER PROTECTED SITE FALLBACK
-  const isProtectedSite = /animeflv|streamwish|vidhide|callistanise|earnvids|turbovid|strp2p|upns|4meplayer|rpmstream|mixdrop/i.test(host);
+  // 3. P2P / UPFAST / PLAYER / RPMSTREAM decrypter
+  if (/strp2p|upns|4meplayer|rpmstream/i.test(host)) {
+    debugLog("resolveEmbed", "Using pure Node P2P decrypter", null);
+    const resolved = await resolveP2PUrl(url, referer);
+    if (resolved) return resolved;
+    debugLog("resolveEmbed", "P2P decrypter failed, falling back to Puppeteer...", null);
+  }
+
+  // 4. PUPPETEER PROTECTED SITE FALLBACK
+  const isProtectedSite = /animeflv|streamwish|vidhide|callistanise|earnvids|turbovid|mixdrop/i.test(host);
   if (isProtectedSite) {
     debugLog("resolveEmbed", "Using puppeteer for protected site", null);
     const resolved = await resolveEmbedWithPuppeteer(url, referer);
