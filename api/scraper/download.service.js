@@ -918,6 +918,16 @@ async function resolveGoodstreamUrl(url, referer) {
 
 async function resolveVimeosUrl(url, referer) {
   debugLog("Vimeos", "Resolving URL", url);
+  try {
+    const vimeusService = require("./vimeus.service");
+    const m3u8 = await vimeusService.extractM3u8FromEmbed(url);
+    if (m3u8) {
+      debugLog("Vimeos", "Direct m3u8 unpacked successfully", m3u8);
+      return m3u8;
+    }
+  } catch (err) {
+    debugLog("Vimeos", "Dean Edwards unpacker error, falling back", err.message);
+  }
   return await resolveEmbedWithPuppeteer(url, referer);
 }
 
@@ -1171,10 +1181,10 @@ async function resolveEmbedUrl(url, record, candidate) {
     return resolved;
   }
 
-  if (/vimeos/i.test(host)) {
-    debugLog("resolveEmbed", "Using Vimeos resolver", null);
+  if (/vimeos|vimeus/i.test(host)) {
+    debugLog("resolveEmbed", "Using Vimeos/Vimeus resolver", null);
     const resolved = await resolveVimeosUrl(url, referer);
-    if (!resolved) throw new Error("No se pudo resolver enlace directo en Vimeos");
+    if (!resolved) throw new Error("No se pudo resolver enlace directo en Vimeos/Vimeus");
     return resolved;
   }
 

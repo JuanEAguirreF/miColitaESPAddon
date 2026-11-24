@@ -1,17 +1,19 @@
 # miColita Esp - Stremio Addon
 
-**miColita Esp** es un addon de Stremio premium, rápido y ligero, diseñado específicamente para la comunidad hispanohablante. Integra en tiempo real los extensos catálogos de películas y series en español de **LaMovie.org** y **TioPlus.app**, resolviendo enlaces de video directos de múltiples servidores (como VOE, Vidhide/Callistanise/Earnvids, Turbovid, P2P, Upfast y más) para ofrecer una reproducción nativa, fluida y completamente libre de anuncios.
+**miColita Esp** es un addon de Stremio premium, rápido y ligero, diseñado específicamente para la comunidad hispanohablante. Utiliza **Vimeus.net** como proveedor principal y fiable de streaming, ofreciendo reproducción dual (stream nativo M3U8 para el reproductor interno de Stremio y Web Embed oficial para el navegador), con máxima estabilidad, audio en español y libre de publicidad.
 
 ---
 
 ## 🌟 Características de miColita Esp
 
-- **Multiproveedor Paralelo (LaMovie + TioPlus):** Consulta simultánea en paralelo de películas y series en milisegundos para garantizar la máxima disponibilidad de enlaces y opciones.
-- **Reproducción Nativa [NATIVO]:** Resolvedor inteligente en tiempo real que extrae el flujo de video crudo (`.m3u8` o `.mp4`) de los servidores de alojamiento y redirige a Stremio, permitiendo la reproducción interna nativa sin abrir navegadores.
-- **Sin Publicidad ni Popups:** Olvídate de los molestos redireccionamientos publicitarios de las webs de streaming tradicionales; el addon filtra y entrega únicamente el archivo de video.
-- **Mapeo Universal de IDs (Cinemeta):** Traduce automáticamente los IDs de IMDb (`ttXXXXXX`) de Stremio a títulos y episodios correctos mediante búsquedas dinámicas y concordancia inteligente (fuzzy matching) asistida por TMDB para títulos en español.
-- **Página de Inicio Premium:** Interfaz web interactiva rediseñada con estética premium de cine, modo oscuro inmersivo, efecto de cristal (glassmorphism), botón de instalación directa e indicador dinámico del manifest.
-- **Arquitectura Serverless Ready:** Diseño ultraligero que elimina la necesidad de levantar navegadores en la mayoría de flujos, lo que lo hace perfecto y estable para despliegues gratuitos de por vida en Vercel.
+- **Proveedor Fiable (Vimeus.net):** Conexión directa a los endpoints de Vimeus con soporte directo para IDs de IMDb y TMDb, garantizando respuesta instantánea y enlaces activos.
+- **Reproducción Dual:**
+  - **[NATIVO]:** Resolvedor instantáneo de M3U8 en tiempo real (desempaquetado Dean Edwards en < 50ms) para reproducción fluida dentro del reproductor de Stremio.
+  - **[EMBED]:** Enlace directo al reproductor web oficial de Vimeus como opción de respaldo.
+- **Sin Publicidad ni Popups:** Olvídate de los molestos redireccionamientos publicitarios de las webs de streaming tradicionales; el addon entrega directamente el flujo de video limpio.
+- **Soporte de Películas y Series:** Resolución de películas y episodios específicos por temporada (`SxxExx`) con fallback para series y anime.
+- **Página de Inicio Premium:** Interfaz web interactiva con estética de cine, modo oscuro inmersivo, efecto de cristal (glassmorphism), botón de instalación directa e indicador dinámico del manifest.
+- **Arquitectura Serverless Ready:** Diseño ultraligero sin sobrecarga de Puppeteer en el flujo principal, perfecto para despliegues gratuitos y estables en Vercel o VPS.
 
 ---
 
@@ -69,10 +71,10 @@ Vercel es la opción ideal para alojar este addon de forma gratuita, estable, r�
 
 ## 📁 Estructura del Código
 
-- `api/index.js`: El corazón del addon. Maneja las rutas Stremio (`/manifest.json`, `/stream/:type/:id.json`), la página de inicio y coordina las búsquedas y fusiones en paralelo.
-- `api/scraper/lamovie.service.js`: Módulo de comunicación directa con LaMovie.org para buscar contenido y obtener enlaces embeds.
-- `api/scraper/tioplus.service.js`: Módulo de comunicación ultrarrápido sin Puppeteer con la API de búsqueda y player de TioPlus.app para resolver tokens en tiempo real.
-- `api/scraper/download.service.js`: resolvedor de enlaces directos (extrae el video directo de VOE, Vidhide, Turbovid, Upfast, etc.).
+- `api/index.js`: El corazón del addon. Maneja las rutas Stremio (`/manifest.json`, `/stream/:type/:id.json`), la página de inicio y coordina la entrega de streams duales (nativo + embed).
+- `api/scraper/vimeus.service.js`: Módulo de integración principal con Vimeus.net. Maneja consultas de películas, series y episodios por IMDb/TMDb IDs y desempacado de streams HLS.
+- `api/scraper/download.service.js`: Resolvedor de enlaces directos (optimizado con desempaquetado de M3U8 de Vimeus/Vimeos).
+- `api/scraper/lamovie.service.js` y `tioplus.service.js`: Módulos de proveedores anteriores (conservados y comentados en el index para referencia futura).
 - `index.js`: El arrancador local para desarrollo rápido en PC (`npm start`).
 - `docker-compose.yml`: Orquestador de contenedores Docker para tu entorno de producción en VPS.
 - `vercel.json`: Configura las rutas para el procesamiento serverless en la plataforma Vercel.

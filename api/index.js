@@ -7,8 +7,11 @@ const corsMiddleware = require('cors');
 
 // Scraper services
 const { resolveEmbedUrl } = require('./scraper/download.service');
-const lamovieService = require('./scraper/lamovie.service');
-const tioplusService = require('./scraper/tioplus.service');
+const vimeusService = require('./scraper/vimeus.service');
+
+// Proveedores anteriores (comentados para usar Vimeus como único proveedor fiable)
+// const lamovieService = require('./scraper/lamovie.service');
+// const tioplusService = require('./scraper/tioplus.service');
 
 const app = express();
 app.use(corsMiddleware());
@@ -16,9 +19,9 @@ app.use(corsMiddleware());
 // Addon Manifest Definition for miColita Esp
 const MANIFEST = {
   id: 'org.micolita.esp.addon',
-  version: '1.3.0',
+  version: '1.4.0',
   name: 'miColita Esp',
-  description: 'Addon de Stremio premium para ver Películas y Series en Español de LaMovie y TioPlus. Enlaces directos sin publicidad y reproducción nativa.',
+  description: 'Addon de Stremio premium para ver Películas y Series en Español alimentado por Vimeus. Reproducción nativa en Stremio y Web Embeds oficiales.',
   logo: 'https://i.imgur.com/G55nEqA.png',
   background: 'https://i.imgur.com/3cPhFmg.jpeg',
   resources: ['stream'],
@@ -101,11 +104,12 @@ async function resolveToDirectLink(id, embedUrl) {
   return null;
 }
 
-// Fetch streams from LaMovie & TioPlus scrapers in parallel
-async function getContentStreams(title, year, type, season, episode, host, protocol) {
+// Fetch streams from Vimeus (single reliable provider)
+// Note: previous scrapers (LaMovie and TioPlus) are commented out below as fallback reference
+async function getContentStreams(title, year, type, season, episode, host, protocol, imdbId, tmdbId) {
   const cacheKey = type === 'movie' 
-    ? `${cleanName(title)}:${year || 'any'}`
-    : `${cleanName(title)}:S${season}E${episode}`;
+    ? `vimeus:${imdbId || cleanName(title)}`
+    : `vimeus:${imdbId || cleanName(title)}:S${season}E${episode}`;
 
   const cached = streamCache.get(cacheKey);
   const now = Date.now();
@@ -117,9 +121,20 @@ async function getContentStreams(title, year, type, season, episode, host, proto
 
   const streams = [];
   try {
-    console.log(`[miColita ESP] [Scraper] Resolving streams for: "${title}" (${year || ''}), Type: ${type}`);
-    
-    // Fetch from both sources in parallel to keep execution sub-second/realtime-ready
+    console.log(`[miColita ESP] [Vimeus] Resolving streams for: "${title}" (IMDb: ${imdbId || 'N/A'}, TMDb: ${tmdbId || 'N/A'}), Type: ${type}`);
+
+    // Proveedor principal y único activo: Vimeus
+    let vimeusEmbeds = [];
+    if (type === 'movie') {
+      vimeusEmbeds = await vimeusService.getMovieStreams(imdbId, tmdbId);
+    } else {
+      vimeusEmbeds = await vimeusService.getSeriesStreams(imdbId, season, episode, tmdbId);
+    }
+
+    /*
+    // =========================================================================
+    // PROVEEDORES ANTERIORES (Comentados como respaldo)
+    // =========================================================================
     const [lamovieEmbeds, tioplusEmbeds] = await Promise.all([
       (async () => {
         try {
@@ -166,89 +181,62 @@ async function getContentStreams(title, year, type, season, episode, host, proto
     }
 
     if (mergedEmbeds.length > 0) {
-      // Sort embeds by playback reliability (non-IP locked servers like VOE first, followed by others)
       mergedEmbeds.sort((a, b) => {
         const getScore = (embed) => {
           const u = embed.url.toLowerCase();
           const s = (embed.server || '').toLowerCase();
-          
-          // 1. VOE is the most reliable (no IP locking)
           if (u.includes('voe')) return 100;
-          
-          // 2. Vidhide / Earnvids / Callistanise are extremely fast and reliable
           if (u.includes('vidhide') || u.includes('callistanise') || u.includes('earnvids') || s.includes('earnvids')) return 80;
-          
-          // 3. Filemoon and Mixdrop
           if (u.includes('filemoon')) return 70;
           if (u.includes('mixdrop')) return 65;
-          
-          // 4. Streamwish
           if (u.includes('hlswish') || u.includes('streamwish')) return 60;
-          
-          // 5. Goodstream and Vimeos
           if (u.includes('goodstream')) return 50;
           if (u.includes('vimeos')) return 40;
-          
-          // 6. TioPlus Turbovid
           if (u.includes('turbovid') || s.includes('tioplus')) return 30;
-          
-          // 7. Light servers (P2P, Upfast, Player, RPM)
           if (s.includes('p2p')) return 20;
           if (s.includes('upfast') || u.includes('upns.pro')) return 18;
           if (s.includes('player') || u.includes('4meplayer.pro')) return 15;
           if (s.includes('rpm') || u.includes('rpmstream')) return 12;
-          
           return 1;
         };
         return getScore(b) - getScore(a);
       });
+    }
+    // =========================================================================
+    */
 
-      mergedEmbeds.forEach((embed) => {
-        // Resolve clean server name based on domain
-        let serverName = 'Online';
-        try {
-          const hostName = new URL(embed.url).hostname.toLowerCase();
-          if (hostName.includes('voe')) serverName = 'VOE';
-          else if (hostName.includes('vimeos') || hostName.includes('vimeus')) serverName = 'Vimeos';
-          else if (hostName.includes('goodstream')) serverName = 'Goodstream';
-          else if (hostName.includes('hlswish') || hostName.includes('streamwish')) serverName = 'Streamwish';
-          else if (hostName.includes('filemoon')) serverName = 'Filemoon';
-          else if (hostName.includes('vidhide') || hostName.includes('callistanise') || hostName.includes('earnvids')) serverName = 'Vidhide';
-          else if (hostName.includes('turbovid')) serverName = 'Turbovid';
-          else if (embed.server) serverName = embed.server;
-        } catch (e) {
-          if (embed.server) serverName = embed.server;
-        }
-        
-        serverName = serverName.toUpperCase();
-        
+    if (vimeusEmbeds && vimeusEmbeds.length > 0) {
+      console.log(`[miColita ESP] [Vimeus] Found ${vimeusEmbeds.length} embeds on Vimeus.net`);
+
+      vimeusEmbeds.forEach((embed) => {
         const langName = (embed.lang || 'Latino').toUpperCase();
-        const qualityName = (embed.quality || 'HD').toUpperCase();
-        const sourceTag = embed.source || 'ADDON';
-        
-        const playDirectUrl = `${protocol}://${host}/play/direct?url=${encodeURIComponent(embed.url)}&id=${cleanName(title)}_${type === 'movie' ? 'movie' : 'S' + season + 'E' + episode}_${cleanName(serverName)}_${sourceTag}`;
+        const qualityName = (embed.quality || 'Full HD').toUpperCase();
+        const serverName = (embed.server || 'VIMEUS').toUpperCase();
+
+        const playDirectUrl = `${protocol}://${host}/play/direct?url=${encodeURIComponent(embed.url)}&id=${imdbId || cleanName(title)}_${type === 'movie' ? 'movie' : 'S' + season + 'E' + episode}_VIMEUS`;
 
         // 1. [NATIVO] Direct play redirect stream (plays inside Stremio)
         streams.push({
           name: `miColita\nEsp`,
           type: 'url',
-          title: `⭐ [NATIVO] [${langName}] ${serverName} (${qualityName}) [${sourceTag}]\n🎬 Reproducción nativa en reproductor interno\n⚡ Resolvedor inteligente de video en tiempo real`,
+          title: `⭐ [NATIVO] [${langName}] Vimeus (${qualityName})\n🎬 Reproducción nativa en reproductor interno\n⚡ Streaming ultra rápido sin publicidad`,
           url: playDirectUrl
         });
 
-        // 2. [EMBED] Standard redirect embed (opens in browser as backup) - Only kept for VIMEOS / VIMEUS
-        if (serverName === 'VIMEOS' || serverName === 'VIMEUS') {
+        // 2. [EMBED] Browser redirect embed (opens in external browser as backup)
+        const embedUrl = embed.vimeusEmbedUrl || embed.url;
+        if (embedUrl) {
           streams.push({
             name: `miColita\nEsp`,
             type: 'embed',
-            title: `🔗 [EMBED] [${langName}] ${serverName} (${qualityName}) [${sourceTag}]\n🌐 Abre en el navegador (Opción tradicional)`,
-            externalUrl: embed.url
+            title: `🔗 [EMBED] [${langName}] Vimeus Web Player (${qualityName})\n🌐 Abre en el navegador (Web Embed oficial)`,
+            externalUrl: embedUrl
           });
         }
       });
     }
   } catch (err) {
-    console.error(`[miColita ESP] [Scraper] Error getting streams:`, err.message);
+    console.error(`[miColita ESP] [Vimeus] Error getting streams:`, err.message);
   }
 
   if (streams.length > 0) {
@@ -270,7 +258,7 @@ function getLandingPageHtml(host, protocol) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>miColita Esp | Stremio Addon</title>
-    <meta name="description" content="Addon premium de Stremio para ver películas y series en español de LaMovie y TioPlus de forma nativa, veloz y sin publicidad.">
+    <meta name="description" content="Addon premium de Stremio para ver películas y series en español alimentado por Vimeus.net de forma nativa, veloz y sin publicidad.">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -578,19 +566,19 @@ function getLandingPageHtml(host, protocol) {
 
             <div class="features">
                 <div class="feature-card">
-                    <i class="fa-solid fa-cubes"></i>
-                    <h3>Multiproveedor Premium</h3>
-                    <p>Acceso integrado a los catálogos en español de LaMovie.org y TioPlus.app en paralelo.</p>
+                    <i class="fa-solid fa-bolt"></i>
+                    <h3>Proveedor Fiable Vimeus</h3>
+                    <p>Integración directa con la infraestructura de alta disponibilidad de Vimeus.net.</p>
+                </div>
+                <div class="feature-card">
+                    <i class="fa-solid fa-circle-play"></i>
+                    <h3>Reproducción Dual</h3>
+                    <p>Streams nativos M3U8 para el reproductor interno de Stremio y Web Embeds oficiales.</p>
                 </div>
                 <div class="feature-card">
                     <i class="fa-solid fa-language"></i>
                     <h3>Audio Latino / Castellano</h3>
-                    <p>Soporte de múltiples variantes de doblajes en español e idiomas originales.</p>
-                </div>
-                <div class="feature-card">
-                    <i class="fa-solid =fa-circle-play"></i>
-                    <h3>Reproducción Directa</h3>
-                    <p>Conversión en tiempo real a enlaces M3U8/MP4 para reproducir directamente en la app sin anuncios.</p>
+                    <p>Máxima fidelidad en Full HD con doblajes en español latino y castellano.</p>
                 </div>
             </div>
         </div>
@@ -661,14 +649,14 @@ app.get('/play/direct', async (req, res) => {
   return res.redirect(302, url);
 });
 
-// TMDB Spanish title translation helper
+// TMDB metadata and ID helper
 const tmdbApiKeys = [
   "10923b261ba94d897ac6b81148314a3f",
   "b573d051ec65413c949e68169923f7ff",
   "da40aaeca884d8c9a9a4c088917c474c"
 ];
 
-async function getSpanishTitle(imdbId, type) {
+async function getTmdbInfo(imdbId, type) {
   const resolvedType = type === 'movie' ? 'movie' : 'tv';
   for (const apiKey of tmdbApiKeys) {
     try {
@@ -678,18 +666,24 @@ async function getSpanishTitle(imdbId, type) {
       if (data) {
         const tvResults = data.tv_results || [];
         const movieResults = data.movie_results || [];
-        if (tvResults.length > 0 && tvResults[0].name) {
-          return tvResults[0].name;
+        if (tvResults.length > 0) {
+          return {
+            tmdbId: tvResults[0].id,
+            spanishTitle: tvResults[0].name || null
+          };
         }
-        if (movieResults.length > 0 && movieResults[0].title) {
-          return movieResults[0].title;
+        if (movieResults.length > 0) {
+          return {
+            tmdbId: movieResults[0].id,
+            spanishTitle: movieResults[0].title || null
+          };
         }
       }
     } catch (e) {
       // Fail silently to try next key
     }
   }
-  return null;
+  return { tmdbId: null, spanishTitle: null };
 }
 
 // Universal Stremio Stream Route supporting all prefixes
@@ -729,27 +723,32 @@ app.get('/stream/:type/:id.json', async (req, res) => {
     const year = meta.year || '';
     console.log(`[miColita ESP] Resolved Cinemeta title: "${title}" (${year})`);
 
-    // Try to get Spanish title from TMDB
+    // Fetch TMDb ID and Spanish title for highest Vimeus resolution accuracy
+    let tmdbId = null;
     let spanishTitle = null;
     try {
-      spanishTitle = await getSpanishTitle(imdbId, type);
-      if (spanishTitle) {
-        console.log(`[miColita ESP] Resolved Spanish title from TMDB: "${spanishTitle}"`);
+      const tmdbInfo = await getTmdbInfo(imdbId, type);
+      tmdbId = tmdbInfo.tmdbId;
+      spanishTitle = tmdbInfo.spanishTitle;
+      if (tmdbId) {
+        console.log(`[miColita ESP] Resolved TMDb ID: ${tmdbId}, Spanish title: "${spanishTitle || ''}"`);
       }
     } catch (e) {
-      console.error(`[miColita ESP] TMDB Translation Error:`, e.message);
+      console.error(`[miColita ESP] TMDB Info Error:`, e.message);
     }
 
-    // Try fetching with Spanish title first
-    let streams = [];
-    if (spanishTitle && cleanName(spanishTitle) !== cleanName(title)) {
-      streams = await getContentStreams(spanishTitle, year, type, season, episode, host, protocol);
-    }
-
-    // Fallback/alternative: if no streams found or no Spanish title, use English/Cinemeta title
-    if (streams.length === 0) {
-      streams = await getContentStreams(title, year, type, season, episode, host, protocol);
-    }
+    // Resolve streams from Vimeus
+    const streams = await getContentStreams(
+      spanishTitle || title,
+      year,
+      type,
+      season,
+      episode,
+      host,
+      protocol,
+      imdbId,
+      tmdbId
+    );
 
     return res.json({ streams });
   } catch (err) {
