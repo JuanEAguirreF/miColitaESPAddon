@@ -651,7 +651,6 @@ app.get('/play/direct', async (req, res) => {
 
 // TMDB metadata and ID helper
 const tmdbApiKeys = [
-  "10923b261ba94d897ac6b81148314a3f",
   "b573d051ec65413c949e68169923f7ff",
   "da40aaeca884d8c9a9a4c088917c474c"
 ];
@@ -724,11 +723,11 @@ app.get('/stream/:type/:id.json', async (req, res) => {
     console.log(`[miColita ESP] Resolved Cinemeta title: "${title}" (${year})`);
 
     // Fetch TMDb ID and Spanish title for highest Vimeus resolution accuracy
-    let tmdbId = null;
+    let tmdbId = meta.moviedb_id || null;
     let spanishTitle = null;
     try {
       const tmdbInfo = await getTmdbInfo(imdbId, type);
-      tmdbId = tmdbInfo.tmdbId;
+      if (tmdbInfo.tmdbId) tmdbId = tmdbInfo.tmdbId;
       spanishTitle = tmdbInfo.spanishTitle;
       if (tmdbId) {
         console.log(`[miColita ESP] Resolved TMDb ID: ${tmdbId}, Spanish title: "${spanishTitle || ''}"`);

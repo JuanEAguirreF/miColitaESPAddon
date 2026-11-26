@@ -130,42 +130,39 @@ async function fetchVimeusData(endpoint, queryParams) {
 }
 
 /**
+ * Queries candidates in order and returns the first valid embeds + exact Vimeus embed URL.
+ */
+async function resolveFromCandidates(candidates) {
+  for (const { endpoint, params } of candidates) {
+    const data = await fetchVimeusData(endpoint, params);
+    if (data && data.embeds && data.embeds.length > 0) {
+      const qs = new URLSearchParams(params).toString();
+      const vimeusEmbedUrl = `${BASE_URL}/e/${endpoint}?${qs}`;
+      return data.embeds.map((emb, index) => ({
+        url: emb.url,
+        vimeusEmbedUrl,
+        server: emb.server || 'VIMEUS',
+        lang: emb.lang || 'Latino',
+        quality: emb.quality || 'Full HD',
+        source: 'VIMEUS',
+        title: data.title || '',
+        index
+      }));
+    }
+  }
+  return [];
+}
+
+/**
  * Retrieves movie embeds from Vimeus.
  * Tries IMDb ID first, then TMDb ID if available.
  */
 async function getMovieStreams(imdbId, tmdbId) {
   const viewKey = DEFAULT_VIEW_KEY;
-  let data = null;
-
-  // 1. Try IMDb ID
-  if (imdbId) {
-    data = await fetchVimeusData('movie', { imdb: imdbId, view_key: viewKey });
-  }
-
-  // 2. Fallback to TMDb ID
-  if ((!data || !data.embeds || data.embeds.length === 0) && tmdbId) {
-    console.log(`[Vimeus Service] Fallback to TMDB ID: ${tmdbId} for movie`);
-    data = await fetchVimeusData('movie', { tmdb: tmdbId, view_key: viewKey });
-  }
-
-  if (!data || !data.embeds || data.embeds.length === 0) {
-    return [];
-  }
-
-  const vimeusEmbedUrl = imdbId 
-    ? `${BASE_URL}/e/movie?imdb=${imdbId}&view_key=${viewKey}`
-    : `${BASE_URL}/e/movie?tmdb=${tmdbId}&view_key=${viewKey}`;
-
-  return data.embeds.map((emb, index) => ({
-    url: emb.url,
-    vimeusEmbedUrl,
-    server: emb.server || 'VIMEUS',
-    lang: emb.lang || 'Latino',
-    quality: emb.quality || 'Full HD',
-    source: 'VIMEUS',
-    title: data.title || '',
-    index
-  }));
+  const candidates = [];
+  if (imdbId) candidates.push({ endpoint: 'movie', params: { imdb: imdbId, view_key: viewKey } });
+  if (tmdbId) candidates.push({ endpoint: 'movie', params: { tmdb: tmdbId, view_key: viewKey } });
+  return resolveFromCandidates(candidates);
 }
 
 /**
@@ -174,49 +171,12 @@ async function getMovieStreams(imdbId, tmdbId) {
  */
 async function getSeriesStreams(imdbId, season, episode, tmdbId) {
   const viewKey = DEFAULT_VIEW_KEY;
-  let data = null;
-
-  // 1. Try /e/serie with IMDb ID
-  if (imdbId) {
-    data = await fetchVimeusData('serie', { imdb: imdbId, se: season, ep: episode, view_key: viewKey });
-  }
-
-  // 2. Try /e/serie with TMDb ID
-  if ((!data || !data.embeds || data.embeds.length === 0) && tmdbId) {
-    console.log(`[Vimeus Service] Fallback to TMDB ID: ${tmdbId} for serie S${season}E${episode}`);
-    data = await fetchVimeusData('serie', { tmdb: tmdbId, se: season, ep: episode, view_key: viewKey });
-  }
-
-  // 3. Fallback to /e/anime with IMDb ID
-  if (!data || !data.embeds || data.embeds.length === 0) {
-    if (imdbId) {
-      data = await fetchVimeusData('anime', { imdb: imdbId, se: season, ep: episode, view_key: viewKey });
-    }
-  }
-
-  // 4. Fallback to /e/anime with TMDb ID
-  if ((!data || !data.embeds || data.embeds.length === 0) && tmdbId) {
-    data = await fetchVimeusData('anime', { tmdb: tmdbId, se: season, ep: episode, view_key: viewKey });
-  }
-
-  if (!data || !data.embeds || data.embeds.length === 0) {
-    return [];
-  }
-
-  const vimeusEmbedUrl = imdbId
-    ? `${BASE_URL}/e/serie?imdb=${imdbId}&se=${season}&ep=${episode}&view_key=${viewKey}`
-    : `${BASE_URL}/e/serie?tmdb=${tmdbId}&se=${season}&ep=${episode}&view_key=${viewKey}`;
-
-  return data.embeds.map((emb, index) => ({
-    url: emb.url,
-    vimeusEmbedUrl,
-    server: emb.server || 'VIMEUS',
-    lang: emb.lang || 'Latino',
-    quality: emb.quality || 'Full HD',
-    source: 'VIMEUS',
-    title: data.title || '',
-    index
-  }));
+  const candidates = [];
+  if (imdbId) candidates.push({ endpoint: 'serie', params: { imdb: imdbId, se: season, ep: episode, view_key: viewKey } });
+  if (tmdbId) candidates.push({ endpoint: 'serie', params: { tmdb: tmdbId, se: season, ep: episode, view_key: viewKey } });
+  if (imdbId) candidates.push({ endpoint: 'anime', params: { imdb: imdbId, se: season, ep: episode, view_key: viewKey } });
+  if (tmdbId) candidates.push({ endpoint: 'anime', params: { tmdb: tmdbId, se: season, ep: episode, view_key: viewKey } });
+  return resolveFromCandidates(candidates);
 }
 
 module.exports = {
